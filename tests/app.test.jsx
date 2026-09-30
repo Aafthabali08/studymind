@@ -137,7 +137,9 @@ describe("login gate and demo page", () => {
     expect(
       screen.queryByRole("dialog", { name: "Log in" }),
     ).not.toBeInTheDocument();
-    await click("Upload files");
+    await userEvent.click(
+      screen.getByRole("button", { name: /Interview studio/ }),
+    );
     expect(screen.getByRole("dialog", { name: "Log in" })).toBeVisible();
   });
   it("opens sign up and log in as a floating card at the top right", async () => {

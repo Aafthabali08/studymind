@@ -1237,13 +1237,6 @@ export default function App() {
           )}
           <footer className="page-footer">
             <span>Less overwhelm. More understanding.</span>
-            <span className="footer-cta">
-              MADE FOR YOUR CURIOUS MIND
-              <Sparkles size={13} />
-              <button className="text-button" onClick={openUpload}>
-                <Upload size={14} /> Upload files
-              </button>
-            </span>
           </footer>
         </main>
 

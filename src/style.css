@@ -3062,24 +3062,6 @@ button.local-label {
   font-size: 15px;
   padding: 50px 24px;
 }
-.footer-cta {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.page-footer > span.footer-cta {
-  display: flex;
-}
-.footer-cta .text-button {
-  font-size: 12px;
-  letter-spacing: 0;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 6px 12px;
-  color: var(--text);
-}
-
 /* ---- Upload queue ---- */
 .upload-queue {
   list-style: none;
