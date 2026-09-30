@@ -1,0 +1,29 @@
+Priya Sharma
+priya.sharma@example.com | +91 98765 43210 | github.com/priyasharma
+
+SUMMARY
+Computer science graduate who builds fast, accessible web apps. Enjoys turning messy data into clear products.
+
+SKILLS
+Languages: JavaScript, TypeScript, Python, SQL
+Frameworks: React, Node.js, Express, FastAPI
+Tools: Docker, Git, Firebase, PostgreSQL
+
+EXPERIENCE
+Software Engineering Intern, Acme Analytics
+• Built a React dashboard used by 1,200 analysts to track weekly sales.
+• Reduced API response time by 40% by adding Redis caching to Node.js services.
+• Wrote unit tests with Jest, raising coverage from 35% to 80%.
+
+PROJECTS
+StudyBuddy – AI flashcard generator
+• Built a FastAPI service that turns lecture notes into flashcards for 300 students.
+• Deployed with Docker on Google Cloud Run.
+Campus Events App
+• React Native app for 2,000 students to discover and RSVP to college events.
+
+EDUCATION
+B.Tech in Computer Science, National Institute of Technology, 2025, CGPA 8.7
+
+CERTIFICATIONS
+AWS Certified Cloud Practitioner

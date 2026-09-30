@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+.firebase/
+.DS_Store
+
+# Firebase emulator logs
+*-debug.log

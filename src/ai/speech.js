@@ -1,0 +1,129 @@
+// Main-thread API for the speech worker: model status (for the UI), live and
+// final transcription, and embedding-based relevance scoring.
+import { useSyncExternalStore } from "react";
+import { cleanTranscript, prepareAudio } from "../audio";
+
+let state = {
+  live: "idle",
+  final: "idle",
+  embed: "idle",
+  progress: {},
+  error: "",
+};
+const listeners = new Set();
+function set(patch) {
+  state = { ...state, ...patch };
+  listeners.forEach((l) => l());
+}
+const subscribe = (l) => (listeners.add(l), () => listeners.delete(l));
+export const getSpeechState = () => state;
+export const useSpeech = () =>
+  useSyncExternalStore(subscribe, getSpeechState, getSpeechState);
+
+/** On-device speech needs workers, WebAssembly, a microphone and Web Audio. */
+export const speechSupported = () =>
+  typeof Worker !== "undefined" &&
+  typeof WebAssembly !== "undefined" &&
+  typeof navigator !== "undefined" &&
+  Boolean(navigator.mediaDevices?.getUserMedia) &&
+  Boolean(
+    typeof window !== "undefined" &&
+    (window.AudioContext || window.webkitAudioContext),
+  );
+
+let worker,
+  seq = 0;
+const pending = new Map();
+function getWorker() {
+  if (worker !== undefined) return worker;
+  if (typeof Worker === "undefined") return (worker = null);
+  try {
+    worker = new Worker(new URL("./speech.worker.js", import.meta.url), {
+      type: "module",
+    });
+  } catch {
+    return (worker = null);
+  }
+  worker.onmessage = ({ data }) => {
+    if (data.type === "status")
+      return set({
+        [data.kind]: data.status,
+        progress: {
+          ...state.progress,
+          [data.kind]:
+            data.status === "ready" ? 100 : state.progress[data.kind] || 0,
+        },
+        error: data.message || state.error,
+      });
+    if (data.type === "progress")
+      return set({
+        progress: { ...state.progress, [data.kind]: data.progress },
+      });
+    const job = pending.get(data.id);
+    if (!job) return;
+    pending.delete(data.id);
+    if (data.type === "error") job.reject(new Error(data.message));
+    else job.resolve(data.result);
+  };
+  return worker;
+}
+function call(type, data = {}, transfer = []) {
+  const w = getWorker();
+  if (!w)
+    return Promise.reject(new Error("On-device speech is not supported here."));
+  const id = ++seq;
+  return new Promise((resolve, reject) => {
+    pending.set(id, { resolve, reject, type });
+    w.postMessage({ id, type, ...data }, transfer);
+  });
+}
+
+/** Loads the models in order of need: live speech, scoring, final speech. */
+let preloaded = false;
+export function preloadSpeech() {
+  if (preloaded || !speechSupported()) return;
+  preloaded = true;
+  call("load", { kind: "live" })
+    .then(() => call("load", { kind: "embed" }))
+    .then(() => call("load", { kind: "final" }))
+    .catch(() => {});
+}
+
+let liveBusy = false;
+/**
+ * Transcribes 16 kHz audio. "live" requests are dropped while one is running,
+ * so the live transcript never falls behind; "final" requests always run.
+ * Returns cleaned text, or null when skipped / no speech.
+ */
+export async function transcribe(audio, { quality = "live" } = {}) {
+  const prepared = prepareAudio(audio);
+  if (!prepared) return "";
+  if (quality === "live") {
+    if (liveBusy) return null;
+    liveBusy = true;
+  }
+  try {
+    const { text } = await call("transcribe", { audio: prepared, quality }, [
+      prepared.buffer,
+    ]);
+    return cleanTranscript(text);
+  } finally {
+    if (quality === "live") liveBusy = false;
+  }
+}
+
+const dot = (a, b) => a.reduce((n, x, i) => n + x * b[i], 0);
+/**
+ * 0–100 relevance of an answer to its question, from MiniLM cosine similarity
+ * (≈0.15 unrelated … ≈0.6 clearly on topic). Null when the model is unavailable.
+ */
+export async function semanticRelevance(question, answer) {
+  if (!speechSupported() || !question?.trim() || !answer?.trim()) return null;
+  try {
+    const [q, a] = await call("embed", { texts: [question, answer] });
+    const sim = dot(q, a);
+    return Math.round(Math.max(0, Math.min(1, (sim - 0.15) / 0.45)) * 100);
+  } catch {
+    return null;
+  }
+}

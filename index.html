@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta
+      name="description"
+      content="StudyMind: upload PDFs and get detailed notes, 2/5/8-mark question banks, study plans, an AI tutor and interview practice."
+    />
+    <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#070707" media="(prefers-color-scheme: dark)" />
+    <meta property="og:title" content="StudyMind — Your learning space" />
+    <meta property="og:description" content="Notes, exam questions by marks, study plans and interview practice from your own PDFs." />
+    <link rel="icon" href="/favicon.svg" />
+    <!-- Apply the saved theme before the first paint (no light/dark flash). -->
+    <script>
+      try {
+        document.documentElement.dataset.theme =
+          localStorage.getItem("studymind-theme") === "dark" ? "dark" : "light";
+      } catch (e) {
+        document.documentElement.dataset.theme = "light";
+      }
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preconnect" href="https://firestore.googleapis.com" />
+    <link rel="preconnect" href="https://identitytoolkit.googleapis.com" />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&display=swap"
+    />
+    <title>StudyMind — Your learning space</title>
+    <style>
+      html[data-theme="dark"] body { background: #070707; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>StudyMind needs JavaScript. Please enable it and reload.</noscript>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

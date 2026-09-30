@@ -1,0 +1,83 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+    // The admin must be signed in with this verified email (Google sign-in
+    // counts as verified). Checked by Google's servers, so it cannot be faked.
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.email == "aafthabali08@gmail.com"
+        && request.auth.token.email_verified == true;
+    }
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+    function onlyChanges(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
+    // Profile: the owner writes it; the admin can read and search profiles
+    // (email, name, number of documents) but never document contents.
+    match /users/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow write: if isOwner(uid);
+
+      // Everything else under a user is private to that user.
+      match /{path=**} {
+        allow read, write: if isOwner(uid);
+      }
+
+      // The admin can send a user notifications (ticket updates).
+      match /notifications/{id} {
+        allow create: if isAdmin();
+        allow read: if isOwner(uid) || isAdmin();
+        allow update: if isOwner(uid) && onlyChanges(["read"]);
+        allow delete: if isOwner(uid);
+      }
+    }
+
+    // Complaint box. Users create and read their own tickets and can add
+    // messages; only the admin changes the status.
+    match /tickets/{id} {
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == "open";
+      allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow update: if isAdmin()
+        || (signedIn() && resource.data.uid == request.auth.uid
+            && onlyChanges(["messages", "updatedAt", "unreadForAdmin", "unreadForUser"]));
+      // The admin, or the owner when deleting their account.
+      allow delete: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+
+      // Optional pictures on a ticket (compressed in the browser, < 700 KB).
+      match /attachments/{attachment} {
+        function ticketOwner() {
+          return signedIn()
+            && get(/databases/$(database)/documents/tickets/$(id)).data.uid == request.auth.uid;
+        }
+        allow read: if isAdmin() || ticketOwner();
+        allow create: if (isAdmin() || ticketOwner())
+          && request.resource.data.dataUrl is string
+          && request.resource.data.dataUrl.matches('^data:image/.*')
+          && request.resource.data.dataUrl.size() < 700000;
+        allow delete: if isAdmin() || ticketOwner();
+      }
+    }
+
+    // ✓ / ✗ feedback on AI output. Users add their own; the admin reviews.
+    match /feedback/{id} {
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow update: if isAdmin();
+      allow delete: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+    }
+
+    // Admin guidance added to every Gemini prompt; readable by all users.
+    match /app/{doc} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+  }
+}
