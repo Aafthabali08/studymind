@@ -4,9 +4,15 @@ import userEvent from "@testing-library/user-event";
 import { it, expect, vi } from "vitest";
 import InterviewStudio from "../src/InterviewStudio";
 import { readFileSync } from "node:fs";
-import { downloadText } from "../src/documents";
+import { exportBlocks } from "../src/exporters/index";
 import { readResume } from "../src/resume";
-vi.mock("../src/documents", () => ({ downloadText: vi.fn() }));
+vi.mock("../src/documents", () => ({ downloadText: vi.fn(), downloadBlob: vi.fn() }));
+vi.mock("../src/exporters/index", async (orig) => ({
+  ...(await orig()),
+  exportBlocks: vi.fn(async ({ name, format }) => `${name.join(" - ")}.${format === "word" ? "docx" : "pdf"}`),
+}));
+const blockText = (blocks) =>
+  blocks.map((b) => [b.text, b.meta, ...(b.rows || []).flat()].filter(Boolean).join(" ")).join("\n");
 vi.mock("../src/resume", () => ({ readResume: vi.fn() }));
 const resumeText = readFileSync("tests/fixtures/resume.txt", "utf8");
 const click = async (name) =>
@@ -48,13 +54,13 @@ it("preserves answers, invalidates stale feedback, completes, and exports all qu
   );
   await click("Finish practice");
   expect(screen.getByText("SESSION COMPLETE")).toBeVisible();
-  await click("Download full transcript");
-  expect(downloadText).toHaveBeenCalledWith(
-    expect.stringMatching(
-      /First answer improved[\s\S]*Second answer[\s\S]*Third answer/,
-    ),
-    "interview-transcript.txt",
+  await click("Full transcript as Word");
+  const call = exportBlocks.mock.calls.at(-1)[0];
+  expect(call).toMatchObject({ format: "word", name: ["Interview - Software Engineer", "Transcript"] });
+  expect(blockText(call.blocks)).toMatch(
+    /First answer improved[\s\S]*Second answer[\s\S]*Third answer/,
   );
+  expect(call.blocks.filter((b) => b.type === "question")).toHaveLength(3);
   await click("Review my answers");
   expect(screen.getByLabelText("Your transcript")).toHaveValue(
     "First answer improved",
@@ -255,12 +261,11 @@ it("asks deeper follow-ups when the user chooses Yes, rates answers and builds a
   ).not.toBeNull();
   expect(document.querySelector(".report-item.band-red")).not.toBeNull();
   expect(screen.getByText(/Answer with your voice next time/)).toBeVisible();
-  await click("Download report");
-  expect(downloadText).toHaveBeenCalledWith(
-    expect.stringMatching(
-      /# Interview report[\s\S]*Overall: \d+\/100[\s\S]*follow-up on React/,
-    ),
-    "interview-report.md",
+  await click("Report as PDF");
+  const report = exportBlocks.mock.calls.at(-1)[0];
+  expect(report).toMatchObject({ format: "pdf", name: ["Interview - Software Engineer", "Report"] });
+  expect(blockText(report.blocks)).toMatch(
+    /Report · \d+\/100[\s\S]*Overall Strong Fair Needs work[\s\S]*Follow-up 1\/\d on “React”[\s\S]*How to improve/,
   );
 });
 it("runs a full 5–7 question deep dive, then resumes the main questions automatically", async () => {

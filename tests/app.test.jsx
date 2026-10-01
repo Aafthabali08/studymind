@@ -16,7 +16,26 @@ import { samples } from "./fixtures/samples";
 vi.mock("../src/documents", () => ({
   readDocument: vi.fn(),
   downloadText: vi.fn(),
+  downloadBlob: vi.fn(),
   warmUpReader: vi.fn(),
+}));
+// PDF / Word downloads: capture what would be written.
+vi.mock("../src/exporters/index", async (orig) => {
+  const real = await orig();
+  const { fileName } = await import("../src/exporters/blocks");
+  return {
+    ...real,
+    exportBlocks: vi.fn(async ({ name, format }) =>
+      fileName(name, format === "word" ? "docx" : "pdf"),
+    ),
+  };
+});
+vi.mock("../src/questionPdf", async (orig) => ({
+  ...(await orig()),
+  downloadQuestionPdf: vi.fn(async ({ doc, title }) => ({
+    fileName: `${doc.name} - ${title}.pdf`,
+    count: 21,
+  })),
 }));
 // A signed-in (or signed-out) user without touching real Firebase.
 const authState = vi.hoisted(() => ({
@@ -203,7 +222,8 @@ describe("signed in: navigation, account and library", () => {
       ["Interview", "Meet your next chapter."],
     ]) {
       await userEvent.click(dock().getByRole("button", { name, exact: true }));
-      expect(screen.getByRole("heading", { name: title })).toBeVisible();
+      // Pages load on demand: wait for each one.
+      expect(await screen.findByRole("heading", { name: title })).toBeVisible();
     }
   });
   it("opens the account menu with AI settings, back to studying and log out", async () => {
@@ -552,11 +572,24 @@ describe("documents and study tools", () => {
     expect(
       screen.getByRole("heading", { level: 1, name: "My notes" }),
     ).toBeVisible();
-    await click("Download notes");
-    expect(documents.downloadText).toHaveBeenCalledWith(
-      "# My notes\n\nSome **bold** text.",
-      "Artificial Intelligence - notes.md",
+    const { exportBlocks } = await import("../src/exporters/index");
+    await click("Download notes as Word");
+    expect(exportBlocks).toHaveBeenCalledWith(
+      expect.objectContaining({
+        format: "word",
+        name: ["Artificial Intelligence", "Notes"],
+      }),
     );
+    const exported = exportBlocks.mock.calls.at(-1)[0].blocks;
+    expect(exported).toEqual(
+      expect.arrayContaining([
+        { type: "h", level: 1, text: "My notes" },
+        { type: "p", text: "Some **bold** text." },
+      ]),
+    );
+    expect(
+      await screen.findByText("Downloaded Artificial Intelligence - Notes.docx."),
+    ).toBeVisible();
     await click("Reset to built-in notes");
     expect(
       within(document.querySelector(".notes-body")).getByRole("heading", {
@@ -602,13 +635,21 @@ describe("documents and study tools", () => {
     expect(
       screen.getAllByRole("heading", { level: 2, name: "Conclusion" }).length,
     ).toBeGreaterThan(0);
-    await click("Download complete question bank");
-    expect(documents.downloadText).toHaveBeenCalledWith(
-      expect.stringMatching(
-        /## 2-mark questions[\s\S]*### Definition[\s\S]*Memory trick[\s\S]*## 5-mark questions[\s\S]*## 8-mark questions/,
-      ),
-      "Artificial Intelligence - question bank.md",
+    await click("Complete question bank as PDF");
+    const { downloadQuestionPdf } = await import("../src/questionPdf");
+    expect(downloadQuestionPdf).toHaveBeenCalledWith(
+      expect.objectContaining({
+        format: "pdf",
+        category: "all",
+        title: "Complete question bank",
+        bank: expect.objectContaining({ 2: expect.any(Array), 8: expect.any(Array) }),
+      }),
     );
+    expect(
+      await screen.findByText(
+        "Downloaded Artificial Intelligence - Complete question bank.pdf (21 questions).",
+      ),
+    ).toBeVisible();
   });
   it("groups questions by type with importance, memory tricks and a complete bank", async () => {
     await renderApp();
@@ -754,14 +795,18 @@ describe("documents and study tools", () => {
       /Read aloud is unavailable/,
     );
   });
-  it("exports document text", async () => {
+  it("exports document text as a Word document", async () => {
     await renderApp();
     await openAI();
-    await click("Export text");
-    expect(documents.downloadText).toHaveBeenCalledWith(
-      expect.stringContaining("Backpropagation"),
-      "document-text.txt",
+    await click("Export to Word");
+    await vi.waitFor(() =>
+      expect(documents.downloadBlob).toHaveBeenCalledWith(
+        expect.any(Blob),
+        "Artificial Intelligence - text.docx",
+      ),
     );
+    const [blob] = documents.downloadBlob.mock.calls.at(-1);
+    expect(blob.size).toBeGreaterThan(1000);
   });
 });
 describe("AI study tools", () => {
@@ -781,11 +826,12 @@ describe("AI study tools", () => {
     await userEvent.click(
       screen.getAllByRole("button", { name: /Go to page 1/ })[0],
     );
-    await click("Download summary");
-    expect(documents.downloadText).toHaveBeenCalledWith(
-      expect.stringContaining("## Key sentences"),
-      "summary.md",
-    );
+    const { exportBlocks } = await import("../src/exporters/index");
+    await click("Download summary as PDF");
+    const call = exportBlocks.mock.calls.at(-1)[0];
+    expect(call).toMatchObject({ format: "pdf", name: ["Artificial Intelligence", "Page 1 summary"] });
+    expect(call.blocks).toContainEqual({ type: "h", level: 2, text: "Key sentences" });
+    expect(call.blocks.filter((b) => b.type === "li").length).toBeGreaterThan(0);
   });
   it("opens AI engine settings and explains the pipeline", async () => {
     await renderApp();

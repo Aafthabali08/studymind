@@ -373,10 +373,12 @@ export async function readDocument(
   }
 }
 export function downloadText(text, name) {
+  downloadBlob(new Blob([text], { type: "text/plain;charset=utf-8" }), name);
+}
+/** Saves a Blob (e.g. a Word document) under the given file name. */
+export function downloadBlob(blob, name) {
   const link = document.createElement("a");
-  const url = URL.createObjectURL(
-    new Blob([text], { type: "text/plain;charset=utf-8" }),
-  );
+  const url = URL.createObjectURL(blob);
   link.href = url;
   link.download = name;
   document.body.append(link);

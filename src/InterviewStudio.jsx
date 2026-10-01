@@ -5,7 +5,6 @@ import {
   Volume2,
   ArrowRight,
   ArrowUpRight,
-  Download,
   ChevronLeft,
   FileText,
   Plus,
@@ -16,8 +15,10 @@ import {
   CornerDownRight,
   RotateCcw,
 } from "lucide-react";
-import { interviewQuestions, formatTranscript } from "./logic";
-import { downloadText } from "./documents";
+import { interviewQuestions } from "./logic";
+import ExportButtons from "./ExportButtons";
+import { exportBlocks } from "./exporters/index";
+import { markdownBlocks } from "./exporters/blocks";
 import { readResume } from "./resume";
 import {
   parseResume,
@@ -1011,27 +1012,116 @@ export default function InterviewStudio({ active, notify }) {
     };
   }, [complete, questions, answers, ratings, meta, voiceStats]);
 
-  function reportMarkdown() {
-    const lines = [
-      `# Interview report — ${role} (${experience})`,
-      `**Overall: ${report.overall}/100 · ${BANDS[report.band].label}**  ·  🔵 ${report.counts.blue} strong · 🟡 ${report.counts.yellow} fair · 🔴 ${report.counts.red} needs work`,
+  /** Styled PDF / Word documents: the full report, or the transcript. */
+  const header = (subtitle) => [
+    { type: "title", text: `Interview — ${role}` },
+    { type: "subtitle", text: subtitle },
+    {
+      type: "meta",
+      text: `${experience} · ${FORMATS[format]} · ${questions.length} question${questions.length === 1 ? "" : "s"} · ${new Date().toLocaleDateString()}`,
+    },
+  ];
+  const questionMeta = (x) =>
+    [
+      x.r ? `${x.r.score}/100 · ${x.r.label}` : "Not answered",
+      x.meta.followUp &&
+        `Follow-up ${x.meta.depth || ""}${x.meta.of ? `/${x.meta.of}` : ""} on “${x.meta.focus}”`,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  function reportBlocks() {
+    const blocks = [
+      ...header(
+        `Report · ${report.overall}/100 · ${BANDS[report.band].label}`,
+      ),
+      { type: "h", level: 1, text: "Summary" },
+      {
+        type: "table",
+        rows: [
+          ["Overall", "Strong", "Fair", "Needs work"],
+          [
+            `${report.overall}/100`,
+            String(report.counts.blue),
+            String(report.counts.yellow),
+            String(report.counts.red),
+          ],
+        ],
+      },
     ];
     if (report.voice)
-      lines.push(
-        `## Voice\n- Score: ${report.voice.score}/100 (${BANDS[report.voice.band].label})\n- Pace: ${report.voice.wpm} words/min\n- Pauses: ${report.voice.pauses}\n- Filler words: ${report.voice.fillers}\n${report.voice.steadiness != null ? `- Steadiness: ${report.voice.steadiness}%\n` : ""}${report.voice.tips.map((t) => `- ${t}`).join("\n")}`,
+      blocks.push(
+        { type: "h", level: 2, text: "Voice" },
+        {
+          type: "table",
+          rows: [
+            ["Score", "Pace", "Long pauses", "Filler words", ...(report.voice.steadiness != null ? ["Steadiness"] : [])],
+            [
+              `${report.voice.score}/100 · ${BANDS[report.voice.band].label}`,
+              `${report.voice.wpm} words/min`,
+              String(report.voice.pauses),
+              String(report.voice.fillers),
+              ...(report.voice.steadiness != null ? [`${report.voice.steadiness}%`] : []),
+            ],
+          ],
+        },
+        ...report.voice.tips.map((t) => ({ type: "li", indent: 0, text: t })),
       );
-    report.items.forEach((x, i) =>
-      lines.push(
-        `## Q${i + 1}. ${x.q}${x.meta.followUp ? ` _(follow-up on ${x.meta.focus})_` : ""}\n` +
-          (x.r ? `**${x.r.score}/100 · ${x.r.label}**\n\n` : "") +
-          `### Your answer\n${x.a || "_No answer recorded._"}\n\n` +
-          (x.r
-            ? `### Improve\n${x.r.improvements.map((t) => `- ${t}`).join("\n")}\n\n${x.r.better || ""}`
-            : ""),
-      ),
-    );
-    return lines.join("\n\n");
+    blocks.push({ type: "h", level: 1, text: "Questions and answers" });
+    report.items.forEach((x, i) => {
+      blocks.push(
+        { type: "question", n: i + 1, text: x.q, meta: questionMeta(x) },
+        { type: "label", text: "Your answer" },
+        x.a
+          ? { type: "p", text: x.a, plain: true }
+          : { type: "p", text: "*No answer recorded.*" },
+      );
+      if (x.r) {
+        if (x.r.strengths.length) {
+          blocks.push({ type: "h", level: 4, text: "What worked" });
+          x.r.strengths.slice(0, 4).forEach((t) => blocks.push({ type: "li", indent: 0, text: `✓ ${t}` }));
+        }
+        if (x.r.improvements.length) {
+          blocks.push({ type: "h", level: 4, text: "How to improve" });
+          x.r.improvements.forEach((t) => blocks.push({ type: "li", indent: 0, text: t }));
+        }
+        if (x.r.better) blocks.push(...markdownBlocks(x.r.better, { shift: 1 }));
+      }
+      blocks.push({ type: "rule" });
+    });
+    return blocks;
   }
+  function transcriptBlocks(only) {
+    const items = questions
+      .map((q, i) => ({ q, i, a: answers[i]?.trim() }))
+      .filter((x) => only == null || x.i === only);
+    return [
+      ...header(only == null ? "Full transcript" : `Answer ${only + 1}`),
+      ...items.flatMap(({ q, i, a }) => [
+        {
+          type: "question",
+          n: i + 1,
+          text: q,
+          meta: meta[i]?.followUp ? `Follow-up on “${meta[i].focus}”` : "",
+        },
+        { type: "label", text: "Your answer" },
+        a ? { type: "p", text: a, plain: true } : { type: "p", text: "*No answer recorded.*" },
+        { type: "rule" },
+      ]),
+    ];
+  }
+  const exportInterview = (format, kind, only) =>
+    exportBlocks({
+      format,
+      blocks: kind === "report" ? reportBlocks() : transcriptBlocks(only),
+      name: [
+        `Interview - ${role}`,
+        kind === "report"
+          ? "Report"
+          : only == null
+            ? "Transcript"
+            : `Answer ${only + 1}`,
+      ],
+    });
   function practiseWeak() {
     const weak = report.items
       .filter((x) => !x.r || x.r.band !== "blue")
@@ -1418,26 +1508,18 @@ export default function InterviewStudio({ active, notify }) {
                 </article>
               ))}
               <div className="button-row">
-                <button
-                  className="primary"
-                  onClick={() =>
-                    downloadText(
-                      formatTranscript(questions, answers, role, experience),
-                      "interview-transcript.txt",
-                    )
-                  }
-                >
-                  <Download size={16} />
-                  Download full transcript
-                </button>
-                <button
+                <ExportButtons
+                  label="Full transcript"
                   className="secondary"
-                  onClick={() =>
-                    downloadText(reportMarkdown(), "interview-report.md")
-                  }
-                >
-                  <Download size={16} /> Download report
-                </button>
+                  notify={notify}
+                  onExport={(f) => exportInterview(f, "transcript")}
+                />
+                <ExportButtons
+                  label="Report"
+                  className="secondary"
+                  notify={notify}
+                  onExport={(f) => exportInterview(f, "report")}
+                />
                 <button className="secondary" onClick={practiseWeak}>
                   <RotateCcw size={16} /> Practise weaker answers
                 </button>
@@ -1713,18 +1795,14 @@ export default function InterviewStudio({ active, notify }) {
                                 : "Get AI coaching"}
                             </button>
                           ))}
-                        <button
-                          className="text-button"
-                          onClick={() =>
-                            downloadText(
-                              transcript,
-                              `interview-answer-${index + 1}.txt`,
-                            )
+                        <ExportButtons
+                          label="Save this answer"
+                          notify={notify}
+                          disabled={!transcript.trim()}
+                          onExport={(f) =>
+                            exportInterview(f, "transcript", index)
                           }
-                        >
-                          <Download size={15} />
-                          Save this answer
-                        </button>
+                        />
                       </div>
                     </div>
                   )}

@@ -24,7 +24,11 @@ import { makeFlashcards } from "./logic";
 import QuizPanel from "./QuizPanel";
 import useIdleValue from "./useIdleValue";
 import { termFlashcards, withTermQuestions } from "./ai/quiz";
-import { downloadText } from "./documents";
+import { downloadBlob } from "./documents";
+import { documentToWord } from "./wordExport";
+import { downloadQuestionPdf } from "./questionPdf";
+import ExportButtons from "./ExportButtons";
+import { exportBlocks, markdownDocument } from "./exporters/index";
 import { extractKeywords } from "./ai/text";
 import Thinking from "./Thinking";
 import EditableName from "./EditableName";
@@ -33,7 +37,6 @@ import FeedbackButtons from "./FeedbackButtons";
 import Markdown, { Lightbox } from "./Markdown";
 import {
   MARKS,
-  bankToMarkdown,
   buildNotes,
   bankFlashcards,
   buildQuestionBank,
@@ -109,7 +112,8 @@ export default function DocumentWorkspace({
     [openAnswers, setOpenAnswers] = useState({}),
     [importantOnly, setImportantOnly] = useState(false),
     [zoom, setZoom] = useState(null),
-    [jobs, setJobs] = useState({});
+    [jobs, setJobs] = useState({}),
+    [exporting, setExporting] = useState(null); // "word" while exporting
   const images = doc.images || [];
   // Built in idle time after the document opens, so opening never stutters
   // (≈150 ms of work for a 200-page PDF).
@@ -192,6 +196,19 @@ export default function DocumentWorkspace({
     } catch (e) {
       setJob("notes", { status: "error", text: "" });
       notify(e.message || "Detailed notes could not be written.");
+    }
+  }
+  /** Word (.docx) copy of the extracted text, with each page's figures. */
+  async function exportWord() {
+    setExporting("word");
+    try {
+      const { blob, fileName } = await documentToWord(doc);
+      downloadBlob(blob, fileName);
+      notify(`Downloaded ${fileName}.`);
+    } catch (e) {
+      notify(e.message || "The Word file could not be made.");
+    } finally {
+      setExporting(null);
     }
   }
   async function writeBank() {
@@ -391,12 +408,11 @@ export default function DocumentWorkspace({
           )}
           <button
             className="secondary"
-            onClick={() =>
-              downloadText(doc.pages.join("\n\n"), "document-text.txt")
-            }
+            disabled={exporting === "word"}
+            onClick={exportWord}
           >
             <Download size={16} />
-            Export text
+            {exporting === "word" ? "Making Word file…" : "Export to Word"}
           </button>
         </div>
       </div>
@@ -719,30 +735,34 @@ export default function DocumentWorkspace({
                     <Sparkles size={16} /> Turn on AI for written summaries
                   </button>
                 )}
-                <button
-                  className="text-button"
+                <ExportButtons
+                  label="Download summary"
                   disabled={!keyPoints.length}
-                  onClick={() =>
-                    downloadText(
-                      [
-                        `# ${doc.name} — ${scope === "document" ? "summary" : `page ${page + 1} summary`}`,
-                        summary?.text || "",
-                        "## Key sentences",
-                        ...keyPoints.map(
-                          (k) => `- ${k.text} (p. ${k.page + 1})`,
-                        ),
-                        keywords.length
-                          ? `\nKey terms: ${keywords.join(", ")}`
-                          : "",
-                      ]
-                        .filter(Boolean)
-                        .join("\n\n"),
-                      "summary.md",
-                    )
+                  notify={notify}
+                  onExport={(format) =>
+                    exportBlocks({
+                      format,
+                      images,
+                      name: [
+                        doc.name,
+                        scope === "document" ? "Summary" : `Page ${page + 1} summary`,
+                      ],
+                      blocks: markdownDocument({
+                        title: doc.name.replace(/\.[a-z0-9]{2,5}$/i, ""),
+                        subtitle:
+                          scope === "document" ? "Summary" : `Page ${page + 1} summary`,
+                        markdown: [
+                          summary?.text || "",
+                          "## Key sentences",
+                          ...keyPoints.map((k) => `- ${k.text} *(p. ${k.page + 1})*`),
+                          keywords.length ? `## Key terms\n\n${keywords.join(" · ")}` : "",
+                        ]
+                          .filter(Boolean)
+                          .join("\n\n"),
+                      }),
+                    })
                   }
-                >
-                  <Download size={15} /> Download summary
-                </button>
+                />
               </div>
             </div>
           )}
@@ -875,15 +895,23 @@ export default function DocumentWorkspace({
                     Reset to built-in notes
                   </button>
                 )}
-                <button
-                  className="text-button"
-                  onClick={() =>
-                    downloadText(notesMd, `${doc.name} - notes.md`)
+                <ExportButtons
+                  label="Download notes"
+                  disabled={!notesMd.trim()}
+                  notify={notify}
+                  onExport={(format) =>
+                    exportBlocks({
+                      format,
+                      images,
+                      name: [doc.name, "Notes"],
+                      blocks: markdownDocument({
+                        title: doc.name.replace(/\.[a-z0-9]{2,5}$/i, ""),
+                        subtitle: "Detailed study notes",
+                        markdown: notesMd,
+                      }),
+                    })
                   }
-                >
-                  <Download size={16} />
-                  Download notes
-                </button>
+                />
               </div>
             </div>
           )}
@@ -1088,18 +1116,21 @@ export default function DocumentWorkspace({
                     Reset to built-in questions
                   </button>
                 )}
-                <button
-                  className="text-button"
-                  onClick={() =>
-                    downloadText(
-                      bankToMarkdown(doc, bank),
-                      `${doc.name} - question bank.md`,
-                    )
-                  }
-                >
-                  <Download size={16} />
-                  Download complete question bank
-                </button>
+                <ExportButtons
+                  label="Complete question bank"
+                  disabled={!bankTotal}
+                  notify={notify}
+                  onExport={async (format) => {
+                    const { fileName, count } = await downloadQuestionPdf({
+                      format,
+                      doc,
+                      bank,
+                      category: "all",
+                      title: "Complete question bank",
+                    });
+                    return `Downloaded ${fileName} (${count} questions).`;
+                  }}
+                />
               </div>
             </div>
           )}

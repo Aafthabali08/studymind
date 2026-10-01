@@ -100,7 +100,7 @@ describe("question bank PDF", () => {
     expect(text).toContain("Important questions · All categories");
     expect(text).toContain("Define overfitting.");
     expect(text).toContain("memorising");
-    expect(text).toContain("Memory trick:");
+    expect(text).toContain("MEMORY TRICK Over = too much");
     expect(text).toContain("Explain backpropagation with a diagram.");
     expect(text).toContain("∂L/∂w → update, α ≤ 0.1");
     expect(text).toContain("Forward");
@@ -143,7 +143,19 @@ describe("question bank PDF", () => {
       "h", "p", "li", "li", "quote", "image",
     ]);
     expect(pdfText("Brain 🧠 ✅ done ★")).toBe("Brain  ✓ done ★");
-    expect(figuresFor(bank[5][0], doc.images)).toEqual({ inline: true, list: [] });
+    expect(figuresFor(bank[5][0], doc.images)).toEqual({ inline: true, ids: ["img-1"], list: [] });
     expect(figuresFor(bank[2][1], doc.images).list).toHaveLength(0);
   });
+});
+
+it("names the complete question bank PDF with a title", async () => {
+  const { fileName, count } = await buildQuestionPdf({
+    doc,
+    bank,
+    category: "all",
+    title: "Complete question bank",
+    fonts,
+  });
+  expect(fileName).toBe("Neural Networks - Complete question bank.pdf");
+  expect(count).toBe(4);
 });

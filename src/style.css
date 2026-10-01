@@ -5408,7 +5408,7 @@ button.local-label {
 }
 .pdf-panel-fields {
   display: grid;
-  grid-template-columns: 1fr 1.4fr;
+  grid-template-columns: 1fr 1.4fr 0.8fr;
   gap: 12px;
 }
 .pdf-panel label {
@@ -5447,5 +5447,37 @@ button.local-label {
   .pdf-panel-foot {
     flex-direction: column;
     align-items: stretch;
+  }
+}
+
+/* "Download notes: PDF · Word" */
+.export-buttons {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 2px;
+}
+.export-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 4px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.export-buttons > button {
+  padding-inline: 10px;
+}
+.export-buttons > button + button {
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+}
+@media (min-width: 541px) and (max-width: 800px) {
+  .pdf-panel-fields {
+    grid-template-columns: 1fr 1fr;
+  }
+  .pdf-panel-fields > label:nth-child(2) {
+    grid-column: 1 / -1;
+    grid-row: 1;
   }
 }
