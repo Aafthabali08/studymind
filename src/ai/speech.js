@@ -32,10 +32,9 @@ export const speechSupported = () =>
   );
 
 /**
- * Phones and low-memory devices: a mobile browser kills the tab once the
- * worker's WebAssembly heap grows too large, and Whisper base on top of
- * Moonshine and MiniLM is enough to do that. There, Moonshine's live
- * transcript is final and Whisper is never loaded.
+ * Phones and low-memory devices: a mobile browser closes the tab once the
+ * worker's memory grows too large, and Whisper base on top of Moonshine and
+ * MiniLM is enough to do that. There the final transcript uses Whisper tiny.
  */
 export const liteSpeech = () => {
   if (typeof navigator === "undefined") return false;
@@ -48,10 +47,6 @@ export const liteSpeech = () => {
     (navigator.deviceMemory > 0 && navigator.deviceMemory <= 4)
   );
 };
-/** The models this device loads, in order of need. */
-export const speechKinds = () =>
-  liteSpeech() ? ["live", "embed"] : ["live", "embed", "final"];
-
 let worker,
   seq = 0;
 const pending = new Map();
@@ -112,7 +107,7 @@ function call(type, data = {}, transfer = []) {
   const id = ++seq;
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject, type });
-    w.postMessage({ id, type, ...data }, transfer);
+    w.postMessage({ id, type, lite: liteSpeech(), ...data }, transfer);
   });
 }
 
@@ -121,11 +116,9 @@ let preloaded = false;
 export function preloadSpeech() {
   if (preloaded || !speechSupported()) return;
   preloaded = true;
-  speechKinds()
-    .reduce(
-      (chain, kind) => chain.then(() => call("load", { kind })),
-      Promise.resolve(),
-    )
+  call("load", { kind: "live" })
+    .then(() => call("load", { kind: "embed" }))
+    .then(() => call("load", { kind: "final" }))
     .catch(() => {});
 }
 
@@ -136,8 +129,6 @@ let liveBusy = false;
  * Returns cleaned text, or null when skipped / no speech.
  */
 export async function transcribe(audio, { quality = "live" } = {}) {
-  // No Whisper on lite devices: the live transcript stays as the answer.
-  if (quality === "final" && liteSpeech()) return null;
   const prepared = prepareAudio(audio);
   if (!prepared) return "";
   if (quality === "live") {

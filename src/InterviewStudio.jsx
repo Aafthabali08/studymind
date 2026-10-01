@@ -27,7 +27,7 @@ import {
 } from "./ai/interview";
 import {
   preloadSpeech,
-  speechKinds,
+  liteSpeech,
   speechSupported,
   transcribe,
   useSpeech,
@@ -119,7 +119,7 @@ function SpeechStatus({ speech, onDevice }) {
     ["live", "Moonshine (live speech)"],
     ["final", "Whisper (final transcript)"],
     ["embed", "MiniLM (scoring)"],
-  ].filter(([kind]) => speechKinds().includes(kind));
+  ];
   return (
     <div className="speech-status" aria-label="On-device models">
       {parts.map(([kind, label]) => {
@@ -145,14 +145,14 @@ function SpeechStatus({ speech, onDevice }) {
   );
 }
 
-const ALL_MODELS = [
+/** The models this device loads (phones get Whisper tiny; see liteSpeech). */
+const deviceModels = () => [
   ["live", "Moonshine", "Live speech-to-text", 28],
-  ["final", "Whisper base", "Final transcript", 74],
+  liteSpeech()
+    ? ["final", "Whisper tiny", "Final transcript", 41]
+    : ["final", "Whisper base", "Final transcript", 74],
   ["embed", "MiniLM", "Answer scoring", 23],
 ];
-/** The models this device loads (phones skip Whisper; see liteSpeech). */
-const deviceModels = () =>
-  ALL_MODELS.filter(([kind]) => speechKinds().includes(kind));
 export const modelsReady = (speech) =>
   deviceModels().every(([kind]) => speech[kind] === "ready");
 
@@ -198,7 +198,7 @@ function ModelLoader({ speech, onSkip }) {
           <p>
             {failed
               ? "You can still practise by typing your answers. Voice analysis needs the models."
-              : `${MODELS.length === 3 ? "Three" : "Two"} open models run on this device, so your voice never leaves it. They download once (about ${mb} MB) and open instantly next time.`}
+              : `Three open models run on this device, so your voice never leaves it. They download once (about ${mb} MB) and open instantly next time.`}
           </p>
         </div>
       </div>

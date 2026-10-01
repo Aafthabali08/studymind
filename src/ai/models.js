@@ -15,6 +15,9 @@ export const SPEECH_MODELS = {
   // Whisper base (English): accurate final transcript, re-reads the whole
   // answer when recording stops (74 MB, 8-bit; ~2.5 s for a 15 s answer).
   final: "onnx-community/whisper-base.en",
+  // Whisper tiny (English) replaces base on phones, whose browsers close the
+  // tab when memory runs short (41 MB, 8-bit; about half of base's memory).
+  finalLite: "onnx-community/whisper-tiny.en",
   // MiniLM: sentence embeddings to measure how relevant an answer is (23 MB).
   embed: "Xenova/all-MiniLM-L6-v2",
 };

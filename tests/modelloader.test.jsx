@@ -40,3 +40,16 @@ it("lets the user continue by typing when a model cannot load", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Continue with typing" }));
   expect(screen.getByRole("button", { name: /Start practice/ })).toBeInTheDocument();
 });
+
+it("loads Whisper tiny instead of Whisper base on phones", () => {
+  speech = { live: "ready", final: "loading", embed: "ready", progress: { final: 10 }, error: "" };
+  const ua = vi
+    .spyOn(navigator, "userAgent", "get")
+    .mockReturnValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile/15E148");
+  render(<InterviewStudio active notify={vi.fn()} />);
+  const loader = screen.getByRole("status", { name: "Loading Interview Studio" });
+  expect(loader).toHaveTextContent("Whisper tiny");
+  expect(loader).not.toHaveTextContent("Whisper base");
+  expect(loader).toHaveTextContent("about 92 MB");
+  ua.mockRestore();
+});

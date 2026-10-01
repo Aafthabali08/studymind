@@ -1,7 +1,8 @@
 // Interview Studio's on-device open models, in their own worker so they never
 // wait behind anything else:
 //   live speech-to-text  – Moonshine tiny (built for real time: ~0.15 s per clip)
-//   final transcript     – Whisper tiny.en (more accurate: re-reads the answer)
+//   final transcript     – Whisper base.en, or tiny.en on phones (more
+//                          accurate: re-reads the answer)
 //   answer scoring       – MiniLM sentence embeddings (relevance)
 import { pipeline, env } from "@huggingface/transformers";
 import { SPEECH_MODELS } from "./models";
@@ -14,6 +15,8 @@ const MODEL_FOR = {
   embed: SPEECH_MODELS.embed,
 };
 const loading = {};
+// Set by the main thread (see liteSpeech) before any model loads.
+let lite = false;
 const post = (message) => self.postMessage(message);
 
 function load(kind) {
@@ -29,11 +32,17 @@ function load(kind) {
               dtype: "q8",
               progress_callback,
             })
-          : await pipeline("automatic-speech-recognition", MODEL_FOR[kind], {
-              dtype: { encoder_model: "q8", decoder_model_merged: "q8" },
-              device: "wasm",
-              progress_callback,
-            });
+          : await pipeline(
+              "automatic-speech-recognition",
+              kind === "final" && lite
+                ? SPEECH_MODELS.finalLite
+                : MODEL_FOR[kind],
+              {
+                dtype: { encoder_model: "q8", decoder_model_merged: "q8" },
+                device: "wasm",
+                progress_callback,
+              },
+            );
       post({ type: "status", kind, status: "ready" });
       return model;
     } catch (error) {
@@ -46,6 +55,7 @@ function load(kind) {
 }
 
 async function handle({ type, ...data }) {
+  if ("lite" in data) lite = Boolean(data.lite);
   if (type === "load") return Boolean(await load(data.kind));
   if (type === "transcribe") {
     const kind = data.quality === "final" ? "final" : "live";
