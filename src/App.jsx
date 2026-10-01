@@ -52,7 +52,7 @@ import {
 import Landing from "./Landing";
 import EditableName from "./EditableName";
 import { useAuth } from "./auth";
-import { updateSettings, useAI } from "./ai/engine";
+import { serverVerified, updateSettings, useAI } from "./ai/engine";
 import {
   deleteDocument,
   loadImages,
@@ -205,7 +205,9 @@ export default function App() {
         if (!live || !prefs) return;
         if (prefs.theme === "dark" || prefs.theme === "light")
           setTheme(prefs.theme);
-        if (prefs.engine) updateSettings({ engine: prefs.engine });
+        // A model server is per device: only if it was tested on this one.
+        if (prefs.engine && (prefs.engine !== "remote" || serverVerified()))
+          updateSettings({ engine: prefs.engine });
       })
       .catch(() => {});
     return () => {

@@ -15,14 +15,6 @@ const loading = {};
 const stops = new Map();
 const post = (message) => self.postMessage(message);
 
-async function webgpu() {
-  try {
-    return Boolean(navigator.gpu && (await navigator.gpu.requestAdapter()));
-  } catch {
-    return false;
-  }
-}
-
 function load(kind) {
   loading[kind] ||= (async () => {
     const progress_callback = (p) => {
@@ -38,10 +30,12 @@ function load(kind) {
           progress_callback,
         });
       } else {
-        const gpu = await webgpu();
+        // 8-bit on the CPU: the 4-bit WebGPU build (q4f16) wrote repeated
+        // nonsense ("GRADIENTS GRADIENTS…") and never stopped, while q8
+        // answers correctly.
         model = await pipeline("text-generation", MODELS.generate, {
-          device: gpu ? "webgpu" : "wasm",
-          dtype: gpu ? "q4f16" : "q4",
+          device: "wasm",
+          dtype: "q8",
           progress_callback,
         });
       }

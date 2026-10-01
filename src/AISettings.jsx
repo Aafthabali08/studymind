@@ -1,6 +1,15 @@
 import React, { useState } from "react";
 import { ArrowRight, Check } from "lucide-react";
-import { ENGINES, testConnection, updateSettings, useAI } from "./ai/engine";
+import {
+  ENGINES,
+  engineName,
+  serverKey,
+  serverVerified,
+  switchToServer,
+  testConnection,
+  updateSettings,
+  useAI,
+} from "./ai/engine";
 import Thinking from "./Thinking";
 import { geminiAvailable } from "./ai/gemini";
 
@@ -40,19 +49,46 @@ const STEPS = [
 
 export default function AISettings({ onDone }) {
   const ai = useAI();
-  const { engine, baseUrl, model, apiKey } = ai.settings;
+  const { engine } = ai.settings;
+  // The mode shown; a model server only becomes the engine once it passes
+  // a test connection.
+  const [picked, setPicked] = useState(engine);
+  const [server, setServer] = useState({
+    baseUrl: ai.settings.baseUrl,
+    model: ai.settings.model,
+    apiKey: ai.settings.apiKey,
+  });
   const [test, setTest] = useState(null);
   const loading = ai.progress && ai[ai.progress.kind] === "loading";
+  const active = engine === "remote" && serverKey(server) === serverKey(ai.settings);
+  const edit = (patch) => {
+    setServer((s) => ({ ...s, ...patch }));
+    setTest(null);
+  };
+  function choose(id) {
+    setPicked(id);
+    setTest(null);
+    if (id !== "remote") updateSettings({ engine: id });
+    // A server that already passed its test can be switched back to.
+    else if (serverVerified()) updateSettings({ engine: "remote" });
+  }
   async function check() {
+    const tried = { ...server };
     setTest({ status: "testing" });
     try {
-      const reply = await testConnection();
+      const reply = await testConnection(tried);
+      switchToServer(tried);
       setTest({
         status: "ok",
-        message: `Connected. The model replied: "${reply.slice(0, 40)}"`,
+        message: `Connected. ${tried.model} replied "${reply.slice(0, 40)}" and now answers your questions.`,
       });
     } catch (e) {
-      setTest({ status: "error", message: e.message });
+      setTest({
+        status: "error",
+        message: e.message,
+        advice: e.advice,
+        models: e.models || [],
+      });
     }
   }
   return (
@@ -62,21 +98,21 @@ export default function AISettings({ onDone }) {
         Every mode quotes your document with page citations. Stronger modes add
         written answers.
       </p>
+      <p className="engine-now" role="status">
+        Answering now: <strong>{engineName(ai.settings)}</strong>
+      </p>
       <div role="radiogroup" aria-label="AI engine" className="engine-list">
         {ENGINES.map((e) => (
           <label
             key={e.id}
-            className={"engine" + (engine === e.id ? " chosen" : "")}
+            className={"engine" + (picked === e.id ? " chosen" : "")}
           >
             <input
               type="radio"
               name="engine"
               value={e.id}
-              checked={engine === e.id}
-              onChange={() => {
-                setTest(null);
-                updateSettings({ engine: e.id });
-              }}
+              checked={picked === e.id}
+              onChange={() => choose(e.id)}
             />
             <span>
               <strong>
@@ -87,7 +123,7 @@ export default function AISettings({ onDone }) {
           </label>
         ))}
       </div>
-      {engine === "gemini" && !geminiAvailable() && (
+      {picked === "gemini" && !geminiAvailable() && (
         <div className="feedback" role="status">
           <strong>Gemini needs an API key.</strong>
           <p>
@@ -98,7 +134,7 @@ export default function AISettings({ onDone }) {
           </p>
         </div>
       )}
-      {engine === "local" && (
+      {picked === "local" && (
         <div className="feedback" role="status">
           {loading ? (
             <>
@@ -119,23 +155,19 @@ export default function AISettings({ onDone }) {
             <Thinking label="Preparing the model…" compact />
           )}
           <p className="fine">
-            {typeof navigator !== "undefined" && navigator.gpu
-              ? "WebGPU acceleration is available in this browser."
-              : "No WebGPU here, so the model runs on the CPU (slower). Chrome or Edge on desktop is fastest."}
+            Runs on this device's processor. Answers take a few seconds;
+            Gemini or a model server is faster.
           </p>
         </div>
       )}
-      {engine === "remote" && (
+      {picked === "remote" && (
         <div className="remote-fields">
           <div className="chips" role="group" aria-label="Model server presets">
             {PRESETS.map(([label, url, m]) => (
               <button
                 key={label}
-                className={"chip" + (baseUrl === url ? " active" : "")}
-                onClick={() => {
-                  setTest(null);
-                  updateSettings({ baseUrl: url, model: m });
-                }}
+                className={"chip" + (server.baseUrl === url ? " active" : "")}
+                onClick={() => edit({ baseUrl: url, model: m })}
               >
                 {label}
               </button>
@@ -144,24 +176,24 @@ export default function AISettings({ onDone }) {
           <label>
             Server URL
             <input
-              value={baseUrl}
-              onChange={(e) => updateSettings({ baseUrl: e.target.value })}
+              value={server.baseUrl}
+              onChange={(e) => edit({ baseUrl: e.target.value })}
             />
           </label>
           <label>
             Model name
             <input
-              value={model}
-              onChange={(e) => updateSettings({ model: e.target.value })}
+              value={server.model}
+              onChange={(e) => edit({ model: e.target.value })}
             />
           </label>
           <label>
             API key (not needed for Ollama or LM Studio)
             <input
               type="password"
-              value={apiKey}
+              value={server.apiKey}
               autoComplete="off"
-              onChange={(e) => updateSettings({ apiKey: e.target.value })}
+              onChange={(e) => edit({ apiKey: e.target.value })}
             />
           </label>
           <p className="fine">
@@ -169,21 +201,53 @@ export default function AISettings({ onDone }) {
             above. Avoid saving keys on shared computers.
           </p>
           <button
-            className="secondary"
+            className={active ? "secondary" : "primary"}
             disabled={test?.status === "testing"}
             onClick={check}
           >
-            {test?.status === "testing" ? "Testing…" : "Test connection"}
+            {test?.status === "testing"
+              ? "Testing…"
+              : active
+                ? "Test again"
+                : "Test connection and use this server"}
           </button>
           {test?.status === "testing" && (
             <Thinking label="Waiting for the model to reply…" compact />
           )}
-          {test?.message && (
-            <p
-              className={test.status === "error" ? "form-error" : "fine"}
-              role="status"
-            >
-              {test.message}
+          {test?.status === "ok" && (
+            <p className="test-ok" role="status">
+              <Check size={15} /> {test.message}
+            </p>
+          )}
+          {test?.status === "error" && (
+            <div className="test-failed" role="alert">
+              <strong>Not connected, so this server is not used.</strong>
+              <p>{test.message}</p>
+              {test.advice && <p>{test.advice}</p>}
+              {test.models.length > 0 && (
+                <div
+                  className="chips"
+                  role="group"
+                  aria-label="Models this server offers"
+                >
+                  {test.models.map((m) => (
+                    <button
+                      key={m}
+                      className="chip"
+                      onClick={() => edit({ model: m })}
+                    >
+                      Try {m}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {!active && test?.status !== "error" && test?.status !== "ok" && (
+            <p className="fine">
+              This server is used only after the test connection succeeds.
+              Until then StudyMind keeps answering with{" "}
+              {engineName(ai.settings)}.
             </p>
           )}
         </div>
@@ -199,7 +263,8 @@ export default function AISettings({ onDone }) {
         </ol>
       </details>
       <button className="primary" onClick={onDone}>
-        Save and close <ArrowRight size={16} />
+        {picked === "remote" && !active ? "Close" : "Save and close"}{" "}
+        <ArrowRight size={16} />
       </button>
     </div>
   );

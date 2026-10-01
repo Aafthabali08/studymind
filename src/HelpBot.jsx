@@ -6,11 +6,13 @@ import {
   canGenerate,
   cancelGeneration,
   contextBudget,
+  engineName,
   generate,
   getAIState,
   quickAnswer,
+  useAI,
 } from "./ai/engine";
-import { geminiAvailable, imagePart } from "./ai/gemini";
+import { imagePart } from "./ai/gemini";
 import { loadChat, saveChat } from "./cloud";
 import FeedbackButtons from "./FeedbackButtons";
 
@@ -54,6 +56,7 @@ export default function HelpBot({ uid, context }) {
     [busy, setBusy] = useState(false);
   const chatKey = doc ? `doc-${doc.cloudId || doc.id}` : "app";
   const listRef = useRef(null);
+  const ai = useAI();
   const scopes = doc
     ? [
         ["page", `Page ${(context.page ?? 0) + 1}`],
@@ -63,6 +66,13 @@ export default function HelpBot({ uid, context }) {
     : [["screen", "This screen"]];
 
   useEffect(() => setScope(doc ? "page" : "screen"), [doc?.id]);
+  // Escape closes the centred dialog.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => e.key === "Escape" && setOpen(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
   // Each document (and the app) keeps its own saved conversation.
   useEffect(() => {
     setMessages([]);
@@ -85,7 +95,11 @@ export default function HelpBot({ uid, context }) {
     if (which === "screen") {
       const main = document.querySelector("main");
       // innerText = only what is visible on screen (like reading a web page).
-      const text = (main?.innerText ?? main?.textContent ?? "").slice(0, 20000);
+      // Small models get less of the screen (their context is shorter).
+      const text = (main?.innerText ?? main?.textContent ?? "").slice(
+        0,
+        Math.min(20000, contextBudget() * 4),
+      );
       return {
         label: `the ${context.view} screen`,
         text: `Current StudyMind screen: ${context.view}\n\nVisible content:\n${text}`,
@@ -136,17 +150,21 @@ export default function HelpBot({ uid, context }) {
       if (uid) saveChat(uid, chatKey, done).catch(() => {});
     };
     try {
-      // Ask Gemini always uses Gemini when it is configured, whatever
-      // engine is chosen for the rest of the app.
-      const gemini = geminiAvailable();
-      if (!gemini && !canGenerate()) {
-        // No model: answer from the document itself, or explain how to turn Gemini on.
+      // Answers come from the engine chosen in "Your AI engine", so
+      // switching models switches who answers here too.
+      const { engine } = getAIState().settings;
+      if (!canGenerate()) {
+        // No writing model: answer from the document itself, or explain.
         const hit = doc && scope !== "screen" ? quickAnswer(doc, q) : null;
+        const how =
+          engine === "gemini"
+            ? "Gemini isn't turned on yet. Add `VITE_GEMINI_API_KEY` to `.env.local` and restart the app."
+            : "Instant mode only quotes your documents. Choose Gemini, the on-device model or your model server in **Your AI engine** for written answers.";
         finish(
           hit
-            ? `> ${hit.text}\n\n*Exact extract from ${doc.name}, p. ${hit.page + 1}.* Add a Gemini API key for full explanations.`
-            : "Gemini isn't turned on yet. Add `VITE_GEMINI_API_KEY` to `.env.local` and restart the app, then I can read this screen and explain it.",
-          { fallback: true },
+            ? `> ${hit.text}\n\n*Exact extract from ${doc.name}, p. ${hit.page + 1}.* ${how}`
+            : how,
+          { fallback: true, by: engineName() },
         );
         return;
       }
@@ -157,13 +175,14 @@ export default function HelpBot({ uid, context }) {
       }
       parts.push({ text: `Question: ${q}` });
       const content =
-        gemini || getAIState().settings.engine === "gemini"
+        engine === "gemini"
           ? parts
           : parts
               .map((p) => p.text)
               .filter(Boolean)
               .join("\n\n");
-      let streamed = "";
+      let streamed = "",
+        by = engineName();
       const text = await generate(
         [
           { role: "system", content: SYSTEM },
@@ -171,22 +190,26 @@ export default function HelpBot({ uid, context }) {
           { role: "user", content },
         ],
         {
-          maxTokens: 2500,
-          preferGemini: true,
+          maxTokens: engine === "gemini" ? 2500 : 700,
+          onEngine: (name) => (by = name),
           onToken: (t) => {
             streamed += t;
             setMessages([
               ...next,
-              { role: "assistant", text: streamed, pending: true },
+              { role: "assistant", text: streamed, pending: true, by },
             ]);
           },
         },
       );
       finish(
         text.trim() || streamed || "No answer was returned. Please try again.",
+        { by },
       );
     } catch (e) {
-      finish(`**Sorry — I couldn't answer.** ${e.message}`, { error: true });
+      finish(`**Sorry — I couldn't answer.** ${e.message}`, {
+        error: true,
+        by: engineName(),
+      });
     } finally {
       setBusy(false);
     }
@@ -204,137 +227,151 @@ export default function HelpBot({ uid, context }) {
         </button>
       )}
       {open && (
-        <section className="helpbot" role="dialog" aria-label="Ask Gemini">
-          <header className="helpbot-head">
-            <strong>
-              <Sparkles size={16} /> Ask Gemini
-            </strong>
-            <div>
-              {messages.length > 0 && (
+        <div className="helpbot-backdrop" onClick={() => setOpen(false)}>
+          <section
+            className="helpbot"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Ask Gemini"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="helpbot-head">
+              <strong>
+                <Sparkles size={16} /> Ask Gemini
+              </strong>
+              <div>
+                {messages.length > 0 && (
+                  <button
+                    className="icon-button"
+                    aria-label="Clear conversation"
+                    onClick={() => {
+                      setMessages([]);
+                      if (uid) saveChat(uid, chatKey, []).catch(() => {});
+                    }}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                )}
                 <button
                   className="icon-button"
-                  aria-label="Clear conversation"
-                  onClick={() => {
-                    setMessages([]);
-                    if (uid) saveChat(uid, chatKey, []).catch(() => {});
-                  }}
+                  aria-label="Close Ask Gemini"
+                  onClick={() => setOpen(false)}
                 >
-                  <Trash2 size={15} />
+                  <X size={16} />
+                </button>
+              </div>
+            </header>
+            <p className="helpbot-engine">
+              Answering with <strong>{engineName(ai.settings)}</strong>
+            </p>
+            <div
+              className="segmented helpbot-scope"
+              role="group"
+              aria-label="What Gemini can see"
+            >
+              {scopes.map(([value, label]) => (
+                <button
+                  key={value}
+                  aria-pressed={scope === value}
+                  className={scope === value ? "active" : ""}
+                  onClick={() => setScope(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="helpbot-body" ref={listRef} aria-live="polite">
+              {!messages.length && (
+                <div className="helpbot-empty">
+                  <p>
+                    I can see{" "}
+                    {scope === "screen"
+                      ? "everything on this screen"
+                      : scope === "page"
+                        ? `page ${(context.page ?? 0) + 1} of ${doc.name}, including its figures`
+                        : `all of ${doc.name}`}
+                    . Ask me anything.
+                  </p>
+                  {SUGGESTIONS[scope].map((s) => (
+                    <button key={s} className="chip" onClick={() => ask(s)}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {messages.map((m, i) =>
+                m.role === "user" ? (
+                  <div key={i} className="helpbot-user">
+                    {m.text}
+                    {m.scope && <small>Looking at {m.scope}</small>}
+                  </div>
+                ) : m.pending && !m.text ? (
+                  <Thinking
+                    key={i}
+                    label="Gemini is reading…"
+                    detail="Looking at your screen, page or document to answer."
+                    lines={2}
+                  />
+                ) : (
+                  <div
+                    key={i}
+                    className={"helpbot-answer" + (m.pending ? " streaming" : "")}
+                  >
+                    <Markdown images={doc?.images || []}>{m.text}</Markdown>
+                    {m.by && !m.pending && (
+                      <small className="helpbot-by">Answered by {m.by}</small>
+                    )}
+                    {!m.pending && !m.error && !m.fallback && (
+                      <FeedbackButtons
+                        kind="chat"
+                        item={`Q: ${messages[i - 1]?.text || ""}\nA: ${m.text.slice(0, 800)}`}
+                        docId={doc?.cloudId || doc?.id || ""}
+                        docName={doc?.name || context.view}
+                        label="Helpful and correct?"
+                      />
+                    )}
+                  </div>
+                ),
+              )}
+            </div>
+            <form
+              className="chat-form helpbot-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                ask(input);
+              }}
+            >
+              <input
+                aria-label="Ask Gemini a question"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={
+                  scope === "screen"
+                    ? "Ask about this screen…"
+                    : "Ask about this page or document…"
+                }
+              />
+              {busy ? (
+                <button
+                  type="button"
+                  className="icon-dark"
+                  aria-label="Stop"
+                  onClick={cancelGeneration}
+                >
+                  <Square size={15} />
+                </button>
+              ) : (
+                <button
+                  className="icon-dark"
+                  aria-label="Send"
+                  disabled={!input.trim()}
+                >
+                  <ArrowRight size={18} />
                 </button>
               )}
-              <button
-                className="icon-button"
-                aria-label="Close Ask Gemini"
-                onClick={() => setOpen(false)}
-              >
-                <X size={16} />
-              </button>
-            </div>
-          </header>
-          <div
-            className="segmented helpbot-scope"
-            role="group"
-            aria-label="What Gemini can see"
-          >
-            {scopes.map(([value, label]) => (
-              <button
-                key={value}
-                aria-pressed={scope === value}
-                className={scope === value ? "active" : ""}
-                onClick={() => setScope(value)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <div className="helpbot-body" ref={listRef} aria-live="polite">
-            {!messages.length && (
-              <div className="helpbot-empty">
-                <p>
-                  I can see{" "}
-                  {scope === "screen"
-                    ? "everything on this screen"
-                    : scope === "page"
-                      ? `page ${(context.page ?? 0) + 1} of ${doc.name}, including its figures`
-                      : `all of ${doc.name}`}
-                  . Ask me anything.
-                </p>
-                {SUGGESTIONS[scope].map((s) => (
-                  <button key={s} className="chip" onClick={() => ask(s)}>
-                    {s}
-                  </button>
-                ))}
-              </div>
-            )}
-            {messages.map((m, i) =>
-              m.role === "user" ? (
-                <div key={i} className="helpbot-user">
-                  {m.text}
-                  {m.scope && <small>Looking at {m.scope}</small>}
-                </div>
-              ) : m.pending && !m.text ? (
-                <Thinking
-                  key={i}
-                  label="Gemini is reading…"
-                  detail="Looking at your screen, page or document to answer."
-                  lines={2}
-                />
-              ) : (
-                <div
-                  key={i}
-                  className={"helpbot-answer" + (m.pending ? " streaming" : "")}
-                >
-                  <Markdown images={doc?.images || []}>{m.text}</Markdown>
-                  {!m.pending && !m.error && !m.fallback && (
-                    <FeedbackButtons
-                      kind="chat"
-                      item={`Q: ${messages[i - 1]?.text || ""}\nA: ${m.text.slice(0, 800)}`}
-                      docId={doc?.cloudId || doc?.id || ""}
-                      docName={doc?.name || context.view}
-                      label="Helpful and correct?"
-                    />
-                  )}
-                </div>
-              ),
-            )}
-          </div>
-          <form
-            className="chat-form helpbot-form"
-            onSubmit={(e) => {
-              e.preventDefault();
-              ask(input);
-            }}
-          >
-            <input
-              aria-label="Ask Gemini a question"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder={
-                scope === "screen"
-                  ? "Ask about this screen…"
-                  : "Ask about this page or document…"
-              }
-            />
-            {busy ? (
-              <button
-                type="button"
-                className="icon-dark"
-                aria-label="Stop"
-                onClick={cancelGeneration}
-              >
-                <Square size={15} />
-              </button>
-            ) : (
-              <button
-                className="icon-dark"
-                aria-label="Send"
-                disabled={!input.trim()}
-              >
-                <ArrowRight size={18} />
-              </button>
-            )}
-          </form>
-        </section>
+            </form>
+          </section>
+        </div>
       )}
     </>
   );

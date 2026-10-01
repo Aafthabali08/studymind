@@ -92,3 +92,39 @@ it("sends the visible screen as context to the model", async () => {
     expect(cloud.saveChat).toHaveBeenCalledWith("u1", "app", expect.any(Array)),
   );
 });
+
+it("answers with the engine chosen in Your AI engine and says which model answered", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => ({
+      ok: true,
+      body: {
+        getReader: () => {
+          let sent = false;
+          return {
+            read: async () =>
+              sent
+                ? { done: true }
+                : ((sent = true),
+                  {
+                    done: false,
+                    value: new TextEncoder().encode(
+                      'data: {"choices":[{"delta":{"content":"From my server."}}]}\n',
+                    ),
+                  }),
+          };
+        },
+      },
+    })),
+  );
+  updateSettings({ engine: "remote", baseUrl: "http://llm.test/v1", model: "qwen" });
+  render(<HelpBot uid={null} context={{ view: "Library" }} />, {
+    container: document.body.appendChild(document.createElement("div")),
+  });
+  await userEvent.click(screen.getByRole("button", { name: "Ask Gemini" }));
+  expect(screen.getByText(/Answering with/)).toHaveTextContent("qwen on your server");
+  await userEvent.type(screen.getByLabelText("Ask Gemini a question"), "Hi{Enter}");
+  expect(await screen.findByText("From my server.")).toBeVisible();
+  expect(screen.getByText("Answered by qwen on your server")).toBeVisible();
+  expect(String(fetch.mock.calls[0][0])).toBe("http://llm.test/v1/chat/completions");
+});

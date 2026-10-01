@@ -33,7 +33,7 @@ export const ENGINES = [
   {
     id: "local",
     label: "On-device open model",
-    detail: `Adds semantic search (${MODELS.embed.split("/")[1]}) and written answers from ${MODELS.generate.split("/")[1]}. One-time ~400 MB download, cached; your files never leave this device.`,
+    detail: `Adds semantic search (${MODELS.embed.split("/")[1]}) and written answers from ${MODELS.generate.split("/")[1]}. One-time ~540 MB download, cached; your files never leave this device. Slower than Gemini.`,
   },
   {
     id: "remote",
@@ -49,12 +49,20 @@ const DEFAULTS = {
   apiKey: "",
 };
 
+/** Identifies one model server setup; a test connection verifies exactly it. */
+export const serverKey = ({ baseUrl = "", model = "", apiKey = "" } = {}) =>
+  [baseUrl.trim().replace(/\/+$/, ""), model.trim(), apiKey].join("|");
+const verified = (s) => Boolean(s.verified) && s.verified === serverKey(s);
+
 function readSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) || "{}");
     // Only keep a saved engine the user picked themselves; otherwise use the
     // best available default (Gemini once a key is configured).
     if (!saved.chosen) delete saved.engine;
+    // A model server is only used after it passed a test connection.
+    if (saved.engine === "remote" && !verified({ ...DEFAULTS, ...saved }))
+      delete saved.engine;
     return { ...DEFAULTS, ...saved };
   } catch {
     return { ...DEFAULTS };
@@ -243,6 +251,17 @@ const ANSWER_RULES =
   "Cite pages like [p. 3] after each claim. If the excerpts do not contain the answer, " +
   'reply exactly: "The document does not cover this." Keep it under 120 words.';
 
+/**
+ * Removes page citations the excerpts can't back up. Small models (the
+ * on-device one especially) invent pages, e.g. "[p. 9]" in a 3-page file.
+ */
+export function keepRealCitations(text, pages) {
+  return text
+    .replace(/\[p\.\s*(\d+)\]/g, (m, n) => (pages.has(Number(n)) ? m : ""))
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/^[ \t]+|[ \t]+(?=[.,;:!?]|$)/gm, "");
+}
+
 /** Retrieval-augmented answer. Returns sources even when no LLM is enabled. */
 export async function answerQuestion(doc, question, { onToken } = {}) {
   const ranked = await retrieve(doc, question, 4);
@@ -252,6 +271,7 @@ export async function answerQuestion(doc, question, { onToken } = {}) {
   const context = ranked
     .map((r) => `[p. ${r.chunk.page + 1}] ${r.chunk.text}`)
     .join("\n\n");
+  let by = engineName();
   try {
     const text = await generate(
       [
@@ -261,9 +281,10 @@ export async function answerQuestion(doc, question, { onToken } = {}) {
           content: `Excerpts:\n${context}\n\nQuestion: ${question}`,
         },
       ],
-      { onToken, maxTokens: 260 },
+      { onToken, maxTokens: 260, onEngine: (name) => (by = name) },
     );
-    return { extract, text: text.trim() };
+    const pages = new Set(ranked.map((r) => r.chunk.page + 1));
+    return { extract, text: keepRealCitations(text, pages).trim(), by };
   } catch (error) {
     // Keep the (semantic) extract even when the model is unavailable.
     return { extract, text: null, error: error.message };
@@ -320,6 +341,18 @@ export async function generateSummary(
   );
 }
 
+/** The model that answers with the current settings, for labels. */
+export function engineName(settings = state.settings) {
+  if (settings.engine === "gemini") return `Gemini (${GEMINI_MODEL})`;
+  if (settings.engine === "remote") return `${settings.model} on your server`;
+  if (settings.engine === "local")
+    return `${MODELS.generate.split("/")[1]} on this device`;
+  return "Instant (exact extracts)";
+}
+
+/** Whether the saved model server passed a test connection as configured. */
+export const serverVerified = () => verified(state.settings);
+
 // ---- Generation backends ---------------------------------------------------
 /** Long-context engines can read far more text per request. */
 export const contextBudget = () =>
@@ -351,23 +384,26 @@ const textOnly = (messages) =>
   }));
 
 /**
- * Writes with the chosen engine. `preferGemini` (Ask Gemini) always uses
- * Gemini when it is configured. If a model server or the on-device model
- * fails before writing anything, Gemini takes over when available.
+ * Writes with the chosen engine, so switching models switches who answers.
+ * If a model server or the on-device model fails before writing anything,
+ * Gemini takes over when available; `onEngine` reports who actually wrote.
  */
 export async function generate(
   messages,
-  { onToken, maxTokens = 320, preferGemini = false } = {},
+  { onToken, maxTokens = 320, onEngine } = {},
 ) {
   const engine = state.settings.engine;
-  if (engine === "gemini" || (preferGemini && geminiAvailable()))
+  if (engine === "gemini") {
+    onEngine?.(engineName());
     return viaGemini(messages, { onToken, maxTokens });
+  }
   let wrote = false;
   const track = (t) => {
     wrote = true;
     onToken?.(t);
   };
   try {
+    onEngine?.(engineName());
     if (engine === "remote")
       return await remoteChat(textOnly(messages), {
         onToken: track,
@@ -381,12 +417,18 @@ export async function generate(
   } catch (error) {
     if (wrote || !geminiAvailable() || error?.name === "AbortError")
       throw error;
+    onEngine?.(
+      `Gemini (${GEMINI_MODEL}), because ${engineName()} did not answer`,
+    );
     return viaGemini(messages, { onToken, maxTokens });
   }
 }
 
-async function remoteChat(messages, { onToken, maxTokens }) {
-  const { baseUrl, model, apiKey } = state.settings;
+async function remoteChat(
+  messages,
+  { onToken, maxTokens },
+  { baseUrl, model, apiKey } = state.settings,
+) {
   const controller = new AbortController();
   controllers.add(controller);
   try {
@@ -406,8 +448,11 @@ async function remoteChat(messages, { onToken, maxTokens }) {
       }),
     });
     if (!res.ok)
-      throw new Error(
-        `Model server returned ${res.status}. Check the URL, model name and key.`,
+      throw Object.assign(
+        new Error(
+          `Model server returned ${res.status}. Check the URL, model name and key.`,
+        ),
+        { status: res.status },
       );
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -451,13 +496,72 @@ async function remoteChat(messages, { onToken, maxTokens }) {
   }
 }
 
-export async function testConnection() {
-  const reply = await generate(
-    [{ role: "user", content: "Reply with the single word: ready" }],
-    {
-      maxTokens: 8,
-    },
-  );
-  if (!reply.trim()) throw new Error("The model returned an empty reply.");
-  return reply.trim();
+const trimUrl = (url) => (url || "").trim().replace(/\/+$/, "");
+
+/** Model ids the server offers (OpenAI-compatible GET /models), if it says. */
+export async function listServerModels({ baseUrl, apiKey } = state.settings) {
+  try {
+    const res = await fetch(`${trimUrl(baseUrl)}/models`, {
+      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.data || data.models || [])
+      .map((m) => m.id || m.name)
+      .filter(Boolean)
+      .slice(0, 12);
+  } catch {
+    return [];
+  }
+}
+
+/** What to try next after a failed test connection. */
+function serverAdvice(error, { baseUrl, model }) {
+  const local = /localhost|127\.0\.0\.1/.test(baseUrl || "");
+  if (error.status === 401 || error.status === 403)
+    return "The server refused the API key. Check the key, or try another preset.";
+  if (error.status === 404)
+    return `The server doesn't know the model "${model}". Try another model name (see the suggestions below).`;
+  if (error.status === 429)
+    return "The server is rate-limiting this key. Wait a minute or try another model.";
+  if (/Could not reach/.test(error.message))
+    return local
+      ? `Is the server running on this computer? For Ollama run "ollama serve" with OLLAMA_ORIGINS set to this site, and "ollama pull ${model || "llama3.2"}". A localhost server only works from the same computer, so try Groq or OpenRouter on a phone.`
+      : "Check the server URL, or try another preset such as Groq or OpenRouter.";
+  if (/empty reply/.test(error.message))
+    return "The model answered with nothing. Try another model.";
+  return "Try another model or preset.";
+}
+
+/**
+ * Tests a model server with the given settings (not the active engine, and
+ * never falling back to Gemini): resolves with the model's reply, or rejects
+ * with advice and, when the server lists them, other models to try.
+ */
+export async function testConnection(server = state.settings) {
+  try {
+    if (!trimUrl(server.baseUrl) || !server.model?.trim())
+      throw new Error("Enter the server URL and a model name.");
+    const reply = await remoteChat(
+      [{ role: "user", content: "Reply with the single word: ready" }],
+      { maxTokens: 8 },
+      { ...server, baseUrl: trimUrl(server.baseUrl), model: server.model.trim() },
+    );
+    if (!reply.trim()) throw new Error("The model returned an empty reply.");
+    return reply.trim();
+  } catch (error) {
+    const models = (await listServerModels(server)).filter(
+      (m) => m !== server.model,
+    );
+    throw Object.assign(new Error(error.message), {
+      advice: serverAdvice(error, server),
+      models,
+    });
+  }
+}
+
+/** Switches to a model server that just passed testConnection. */
+export function switchToServer({ baseUrl, model, apiKey = "" }) {
+  const server = { baseUrl: trimUrl(baseUrl), model: model.trim(), apiKey };
+  updateSettings({ ...server, engine: "remote", verified: serverKey(server) });
 }

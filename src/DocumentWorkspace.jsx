@@ -28,6 +28,7 @@ import { downloadText } from "./documents";
 import { extractKeywords } from "./ai/text";
 import Thinking from "./Thinking";
 import EditableName from "./EditableName";
+import QuestionPdfPanel from "./QuestionPdfPanel";
 import FeedbackButtons from "./FeedbackButtons";
 import Markdown, { Lightbox } from "./Markdown";
 import {
@@ -334,7 +335,7 @@ export default function DocumentWorkspace({
         patchMessage(id, (m) => ({
           result: res?.extract || m.result,
           ai: res?.text
-            ? { status: "done", text: res.text }
+            ? { status: "done", text: res.text, by: res.by }
             : res?.error
               ? { status: "error", text: "", error: res.error }
               : null,
@@ -496,6 +497,11 @@ export default function DocumentWorkspace({
                                 {m.ai.text}
                               </Markdown>
                             </div>
+                            {m.ai.status === "done" && m.ai.by && (
+                              <small className="answer-by">
+                                Written by {m.ai.by}
+                              </small>
+                            )}
                             {m.ai.status === "done" && (
                               <FeedbackButtons
                                 kind="answer"
@@ -948,6 +954,16 @@ export default function DocumentWorkspace({
                   </button>
                 )}
               </div>
+              {bankReady && bankTotal > 0 && (
+                <QuestionPdfPanel
+                  key={`${doc.id}-${study.bank?.source || "built"}`}
+                  doc={doc}
+                  bank={bank}
+                  notify={notify}
+                  importantOnly={importantOnly}
+                  marks={marks}
+                />
+              )}
               <p className="fine marks-hint">
                 {marks === 2
                   ? "Short answers: a precise definition plus key points."

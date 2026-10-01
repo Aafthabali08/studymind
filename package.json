@@ -19,6 +19,7 @@
     "@huggingface/transformers": "^4.3.0",
     "firebase": "^12.19.0",
     "highlight.js": "^11.12.0",
+    "jspdf": "^4.2.1",
     "lucide-react": "^0.468.0",
     "mammoth": "^1.13.0",
     "pdfjs-dist": "^6.3.289",

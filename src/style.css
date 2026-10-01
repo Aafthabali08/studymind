@@ -2174,9 +2174,63 @@ button.local-label {
 }
 
 /* ---- Dialogs: account and AI ---- */
-.modal {
-  max-height: 90dvh;
+/* The grid track must not grow to the dialog's 480px on narrow screens, or
+   the dialog hangs off the right edge instead of centring. */
+.modal-backdrop {
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: center;
   overflow: auto;
+}
+.modal {
+  width: min(480px, 100%);
+  max-height: calc(100dvh - 40px);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+/* "Save and close" stays reachable however long the dialog is. */
+.engine-now {
+  margin: 0 0 14px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--soft);
+  font-size: 13px;
+}
+.test-ok {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  color: var(--text);
+  font-size: 13px;
+}
+.test-ok svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--band-blue);
+}
+.test-failed {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--band-red) 55%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--band-red) 8%, transparent);
+  font-size: 13px;
+}
+.test-failed p {
+  margin: 6px 0 0;
+  font-size: 13px;
+}
+.test-failed .chips {
+  margin-top: 10px;
+}
+.ai-settings > .primary {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  /* Covers the text scrolling under it, down to the dialog's edge. */
+  box-shadow:
+    0 -14px 18px var(--solid),
+    0 40px 0 0 var(--solid);
 }
 
 .auth-panel .google {
@@ -3231,13 +3285,25 @@ button.local-label {
   font-weight: 550;
   box-shadow: 0 10px 30px var(--shadow);
 }
+/* Laptops: a panel at the bottom right that grows up the right side as the
+   conversation does. Phones (below): a centred dialog over a dimmed page. */
+.helpbot-backdrop {
+  display: contents;
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
 .helpbot {
   position: fixed;
   right: 24px;
   bottom: 24px;
   z-index: 15;
-  width: min(420px, calc(100vw - 32px));
-  height: min(640px, calc(100dvh - 120px));
+  width: min(440px, calc(100vw - 32px));
+  min-height: min(460px, calc(100dvh - 48px));
+  max-height: calc(100dvh - 48px);
+  transition: max-height 0.2s ease;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--line);
@@ -3270,6 +3336,7 @@ button.local-label {
 }
 .helpbot-body {
   flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 8px 16px 12px;
   border-top: 1px solid var(--line);
@@ -3312,6 +3379,22 @@ button.local-label {
 .helpbot-form {
   margin: 10px 12px 12px;
 }
+.helpbot-engine {
+  margin: 0 18px 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.helpbot-engine strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.helpbot-by,
+.answer-by {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
 @media (max-width: 800px) {
   .demo-grid,
   .feature-grid {
@@ -3321,12 +3404,26 @@ button.local-label {
     bottom: 96px;
     right: 16px;
   }
+  .helpbot-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 15;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    place-items: center;
+    padding: 12px;
+    background: #0006;
+    backdrop-filter: blur(6px);
+    animation: fade-in 0.15s ease-out;
+  }
   .helpbot {
-    right: 8px;
-    left: 8px;
-    bottom: 8px;
-    width: auto;
-    height: calc(100dvh - 90px);
+    position: relative;
+    right: auto;
+    bottom: auto;
+    width: 100%;
+    height: calc(100dvh - 24px);
+    min-height: 0;
+    max-height: none;
   }
   .popover {
     right: 16px;
@@ -5299,4 +5396,56 @@ button.local-label {
 .status-actions .fine {
   flex-basis: 100%;
   margin: 0;
+}
+
+/* ---- Question bank → PDF ---- */
+.pdf-panel {
+  margin: 14px 0 6px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--soft);
+}
+.pdf-panel-fields {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 12px;
+}
+.pdf-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 550;
+  min-width: 0;
+}
+.pdf-panel select {
+  width: 100%;
+  min-width: 0;
+}
+.pdf-panel-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+.pdf-panel-foot small {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.pdf-panel-foot .primary {
+  flex: none;
+}
+@media (max-width: 540px) {
+  .pdf-panel-fields {
+    grid-template-columns: 1fr;
+  }
+  .pdf-panel-foot {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
