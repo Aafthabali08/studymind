@@ -1,9 +1,31 @@
 // Firebase sign-in and Firestore (free Spark plan). Without VITE_FIREBASE_*
 // values the landing page explains how to set it up. The SDK is loaded lazily
 // so it never slows the first paint.
+/**
+ * Google sign-in runs its handler page (/__/auth/handler) on `authDomain`.
+ * When that is another site (studymind-….firebaseapp.com) than the app,
+ * phone browsers partition its storage and redirect sign-in fails with
+ * "Unable to process request due to missing initial state". So the app's own
+ * domain is used whenever it serves the handler: Firebase Hosting does this
+ * for its .web.app / .firebaseapp.com domains, and render.yaml proxies
+ * /__/auth/* to Firebase (set VITE_FIREBASE_AUTH_SAME_ORIGIN=true there).
+ */
+export function authDomainFor(
+  configured,
+  location = typeof window !== "undefined" ? window.location : null,
+  sameOrigin = import.meta.env.VITE_FIREBASE_AUTH_SAME_ORIGIN === "true",
+) {
+  const host = location?.host;
+  if (!host || !configured || location.protocol !== "https:") return configured;
+  const project = configured.replace(/\.(firebaseapp\.com|web\.app)$/, "");
+  const firebaseHosting =
+    host === `${project}.web.app` || host === `${project}.firebaseapp.com`;
+  return firebaseHosting || sameOrigin ? host : configured;
+}
+
 const config = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  authDomain: authDomainFor(import.meta.env.VITE_FIREBASE_AUTH_DOMAIN),
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,

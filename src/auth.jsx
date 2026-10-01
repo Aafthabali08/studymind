@@ -27,9 +27,22 @@ const MESSAGES = {
   "auth/cancelled-popup-request": "Google sign-in was closed before finishing.",
   "auth/unauthorized-domain":
     "This domain is not authorized in Firebase Authentication settings.",
+  "auth/web-storage-unsupported":
+    "This browser blocks the storage Google sign-in needs. Open StudyMind in Safari or Chrome, or sign in with email.",
+  "auth/operation-not-supported-in-this-environment":
+    "Google sign-in is not available in this browser. Open StudyMind in Safari or Chrome, or sign in with email.",
   "auth/operation-not-allowed":
     "This sign-in method is not enabled in the Firebase console.",
 };
+/**
+ * In-app browsers (Instagram, Facebook, WhatsApp, LinkedIn, Gmail…) block
+ * popups and wipe sign-in storage between pages, so redirect sign-in fails
+ * there too.
+ */
+export const inAppBrowser = (ua = globalThis.navigator?.userAgent || "") =>
+  /FBAN|FBAV|Instagram|Line\/|WhatsApp|LinkedInApp|GSA\/|Snapchat|Twitter|; wv\)/i.test(
+    ua,
+  );
 const snapshot = (u) =>
   u && {
     uid: u.uid,
@@ -54,7 +67,9 @@ export function AuthProvider({ children }) {
     firebase()
       .then(({ auth, fns }) => {
         if (!live) return;
-        fns.auth.getRedirectResult(auth).catch(() => {});
+        fns.auth.getRedirectResult(auth).catch((error) =>
+          console.warn("Google redirect sign-in failed:", error?.code || error),
+        );
         unsubscribe = fns.auth.onAuthStateChanged(auth, (u) => {
           setUser(snapshot(u));
           setReady(true);
@@ -75,10 +90,17 @@ export function AuthProvider({ children }) {
         try {
           await fns.auth.signInWithPopup(auth, provider);
         } catch (error) {
+          if (error.code !== "auth/popup-blocked") throw error;
+          // In-app browsers lose the redirect's state too: say what works.
+          if (inAppBrowser())
+            throw Object.assign(
+              new Error(
+                "Google sign-in doesn't work inside this app's browser. Open StudyMind in Safari or Chrome (⋯ → Open in browser), or sign in with email.",
+              ),
+              { code: "studymind/in-app-browser" },
+            );
           // Some mobile browsers block popups: fall back to a full redirect.
-          if (error.code === "auth/popup-blocked")
-            await fns.auth.signInWithRedirect(auth, provider);
-          else throw error;
+          await fns.auth.signInWithRedirect(auth, provider);
         }
       },
       async signIn(email, password) {

@@ -46,6 +46,7 @@ firebase deploy --only firestore:rules
 2. Render → **New → Blueprint** → pick the repository. `render.yaml` builds with `npm ci && npm run build` and serves `dist` with SPA rewrites and security headers.
 3. When Render asks, paste the `VITE_*` values from `.env.local` (Firebase config and `VITE_GEMINI_API_KEY`).
 4. Firebase console → Authentication → Settings → **Authorized domains** → add `your-site.onrender.com` (Google sign-in needs it).
+   Google sign-in runs on the site's own domain (`render.yaml` proxies `/__/auth/*` to Firebase), so phones don't fail with *"missing initial state"*. Allow that handler once: Google Cloud console → APIs & Services → Credentials → the **Web client (auto created by Google Service)** → **Authorized redirect URIs** → add `https://your-site.onrender.com/__/auth/handler`. Then set `VITE_FIREBASE_AUTH_SAME_ORIGIN=true` in Render → Environment and redeploy.
 5. Publish `firestore.rules` in the Firebase console (Firestore → Rules).
 
 ## Run
