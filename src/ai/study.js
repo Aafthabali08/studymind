@@ -1004,10 +1004,11 @@ async function geminiGroup(doc, images, marks) {
 
 /**
  * Full Gemini question bank. The three marks groups are requested in parallel
- * (faster, and one busy request does not lose the others); a group that fails
- * keeps the built-in questions.
+ * (faster, and one busy request does not lose the others). A group that fails
+ * keeps the questions it had (`previous`, e.g. an earlier Gemini bank), else
+ * the built-in ones; `failed` lists those marks.
  */
-export async function generateQuestionBank(doc, images) {
+export async function generateQuestionBank(doc, images, { previous } = {}) {
   if (!geminiAvailable()) throw new Error("Question banks need Gemini.");
   const results = await Promise.allSettled(
     MARKS.map((m) => geminiGroup(doc, images, m)),
@@ -1020,14 +1021,15 @@ export async function generateQuestionBank(doc, images) {
     );
   }
   const fallback = buildQuestionBank(doc, images);
-  return Object.fromEntries(
+  const ok = (i) => results[i].status === "fulfilled" && results[i].value.length;
+  const bank = Object.fromEntries(
     MARKS.map((m, i) => [
       m,
-      results[i].status === "fulfilled" && results[i].value.length
-        ? results[i].value
-        : fallback[m],
+      ok(i) ? results[i].value : previous?.[m]?.length ? previous[m] : fallback[m],
     ]),
   );
+  bank.failed = MARKS.filter((_, i) => !ok(i));
+  return bank;
 }
 
 /** Groups a marks list by question type, keeping the preferred type order. */

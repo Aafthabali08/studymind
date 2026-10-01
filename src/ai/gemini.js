@@ -39,6 +39,10 @@ function modelOrder() {
     .sort((a, b) => restingUntil.get(a) - restingUntil.get(b));
   return [...healthy, ...resting];
 }
+/** A used-up daily quota (free tier) only resets the next day. */
+const dailyQuota = (text) => /PerDay/i.test(String(text || ""));
+const DAILY_LIMIT =
+  "Today's free Gemini limit for this API key is used up (other Gemini models are busy). It resets at midnight Pacific time; try again then, or add billing to the key in Google AI Studio.";
 /** Google's "retry in 27s" hint (quota errors), else a sensible default. */
 function retryAfter(hint, fallback) {
   const seconds = parseFloat(String(hint || "").match(/(\d+(?:\.\d+)?)\s*s/)?.[1]);
@@ -186,7 +190,10 @@ export async function streamGemini(
           if (!quota && !/500|503|overloaded|unavailable|high demand/i.test(message))
             throw error;
           if (quota || attempt === 1 || order[index + 1]) {
-            rest(name, quota ? retryAfter(message, 60) : 30);
+            rest(
+              name,
+              dailyQuota(message) ? 3600 : quota ? retryAfter(message, 60) : 30,
+            );
             if (order[index + 1]) switching(order[index + 1]);
             break;
           }
@@ -199,7 +206,9 @@ export async function streamGemini(
     }
     setRetryStatus("");
     throw new Error(
-      /429/.test(String(lastError?.message))
+      dailyQuota(lastError?.message)
+        ? DAILY_LIMIT
+        : /429/.test(String(lastError?.message))
         ? "Gemini rate limit reached. Wait a minute and try again."
         : "Gemini is busy right now (Google reports high demand). The built-in answer is shown; try again in a minute.",
     );
@@ -211,7 +220,8 @@ export async function streamGemini(
       ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
     });
   let res,
-    lastError = null;
+    lastError = null,
+    sawDaily = false;
   // Rate limit (429): the quota is per model, so switch at once and rest this
   // one until Google says it resets. Overloaded (500/503): switch at once too
   // (one quick retry if it is the last model). Retired (404): switch.
@@ -262,15 +272,18 @@ export async function streamGemini(
         break outer;
       }
       let detail = "",
-        hint = "";
+        hint = "",
+        daily = false;
       try {
         const error = (await res.json()).error;
         detail = error?.message || "";
         hint = error?.details?.find((d) => d.retryDelay)?.retryDelay || "";
+        daily = dailyQuota(JSON.stringify(error?.details || ""));
       } catch {
         /* not JSON */
       }
       lastError = { status: res.status, detail };
+      sawDaily ||= daily;
       if (res.status === 400 && config.thinkingConfig && rejectsThinking(detail)) {
         config = withoutThinking(config);
         attempt--;
@@ -283,7 +296,11 @@ export async function streamGemini(
       if (!RETRYABLE.has(res.status)) break outer; // bad key/request: stop
       // Retry an overloaded model only when it is the last one left.
       if (res.status === 429 || attempt === 1 || order[index + 1]) {
-        rest(model, res.status === 429 ? retryAfter(hint || detail, 60) : 30);
+        // A daily quota won't come back in seconds: rest the model an hour.
+        rest(
+          model,
+          daily ? 3600 : res.status === 429 ? retryAfter(hint || detail, 60) : 30,
+        );
         if (order[index + 1]) switching(order[index + 1]);
         continue outer;
       }
@@ -297,7 +314,9 @@ export async function streamGemini(
   if (!res?.ok) {
     const { status, detail } = lastError || {};
     throw new Error(
-      status === 503 || status === 500
+      sawDaily && (status === 429 || status === 503 || status === 500)
+        ? DAILY_LIMIT
+        : status === 503 || status === 500
         ? "Gemini is busy right now (Google reports high demand). The built-in answer is shown; try again in a minute."
         : status === 429
           ? "Gemini rate limit reached. Wait a minute and try again."

@@ -195,12 +195,25 @@ export default function DocumentWorkspace({
     }
   }
   async function writeBank() {
+    if (
+      study.bank?.source === "edited" &&
+      !window.confirm(
+        "Regenerating replaces the questions you edited with new ones from Gemini. Continue?",
+      )
+    )
+      return;
     setJob("bank", { status: "writing" });
     try {
-      const next = await generateQuestionBank(doc, images);
+      const { failed, ...next } = await generateQuestionBank(doc, images, {
+        previous: study.bank,
+      });
       onStudy({ bank: { ...next, source: "ai" } });
       setOpenAnswers({});
       setJob("bank", { status: "done" });
+      if (failed.length)
+        notify(
+          `Gemini couldn't write the ${failed.join(" and ")}-mark questions this time, so those keep their earlier questions. Try regenerating in a minute.`,
+        );
     } catch (e) {
       setJob("bank", { status: "error" });
       notify(e.message || "The question bank could not be generated.");
@@ -1043,20 +1056,22 @@ export default function DocumentWorkspace({
                   {importantOnly
                     ? "No questions are marked important here yet."
                     : "No questions could be built from this document's text alone."}{" "}
-                  {canGenerate()
+                  {geminiAvailable()
                     ? "Generate the full bank with Gemini below."
                     : "Turn on Gemini to generate more."}
                 </p>
               )}
               <div className="button-row">
-                {geminiAvailable() && canGenerate() ? (
+                {/* Question banks always use Gemini, whatever engine answers. */}
+                {geminiAvailable() ? (
                   <button
                     className="primary"
                     disabled={jobs.bank?.status === "writing"}
                     onClick={writeBank}
                   >
                     <Sparkles size={16} />
-                    {study.bank?.source === "ai"
+                    {study.bank?.source === "ai" ||
+                    study.bank?.source === "edited"
                       ? "Regenerate with Gemini"
                       : "Generate full question bank with Gemini"}
                   </button>
