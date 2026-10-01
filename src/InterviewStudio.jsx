@@ -27,6 +27,7 @@ import {
 } from "./ai/interview";
 import {
   preloadSpeech,
+  speechKinds,
   speechSupported,
   transcribe,
   useSpeech,
@@ -118,7 +119,7 @@ function SpeechStatus({ speech, onDevice }) {
     ["live", "Moonshine (live speech)"],
     ["final", "Whisper (final transcript)"],
     ["embed", "MiniLM (scoring)"],
-  ];
+  ].filter(([kind]) => speechKinds().includes(kind));
   return (
     <div className="speech-status" aria-label="On-device models">
       {parts.map(([kind, label]) => {
@@ -144,19 +145,24 @@ function SpeechStatus({ speech, onDevice }) {
   );
 }
 
-const MODELS = [
+const ALL_MODELS = [
   ["live", "Moonshine", "Live speech-to-text", 28],
   ["final", "Whisper base", "Final transcript", 74],
   ["embed", "MiniLM", "Answer scoring", 23],
 ];
+/** The models this device loads (phones skip Whisper; see liteSpeech). */
+const deviceModels = () =>
+  ALL_MODELS.filter(([kind]) => speechKinds().includes(kind));
 export const modelsReady = (speech) =>
-  MODELS.every(([kind]) => speech[kind] === "ready");
+  deviceModels().every(([kind]) => speech[kind] === "ready");
 
 /**
  * In-page loading screen while the three open models download (once) and
  * warm up. The studio opens by itself when all three are ready.
  */
 function ModelLoader({ speech, onSkip }) {
+  const MODELS = deviceModels();
+  const mb = MODELS.reduce((n, m) => n + m[3], 0);
   const failed = MODELS.some(([kind]) => speech[kind] === "error");
   const pct = (kind) =>
     speech[kind] === "ready" ? 100 : Math.round(speech.progress[kind] || 0);
@@ -192,7 +198,7 @@ function ModelLoader({ speech, onSkip }) {
           <p>
             {failed
               ? "You can still practise by typing your answers. Voice analysis needs the models."
-              : "Three open models run on this device, so your voice never leaves it. They download once (about 125 MB) and open instantly next time."}
+              : `${MODELS.length === 3 ? "Three" : "Two"} open models run on this device, so your voice never leaves it. They download once (about ${mb} MB) and open instantly next time.`}
           </p>
         </div>
       </div>
@@ -246,7 +252,9 @@ function BandChip({ band, score, pending }) {
 export default function InterviewStudio({ active, notify }) {
   const { user } = useAuth();
   const speech = useSpeech();
-  const onDevice = speechSupported();
+  // If the live model fails (e.g. a phone ran out of memory), use the
+  // browser's own speech service instead.
+  const onDevice = speechSupported() && speech.live !== "error";
   // The studio waits for its three open models (see ModelLoader).
   const [skipLoader, setSkipLoader] = useState(false);
   const loadingModels = active && onDevice && !skipLoader && !modelsReady(speech);

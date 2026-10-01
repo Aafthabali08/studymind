@@ -31,6 +31,27 @@ export const speechSupported = () =>
     (window.AudioContext || window.webkitAudioContext),
   );
 
+/**
+ * Phones and low-memory devices: a mobile browser kills the tab once the
+ * worker's WebAssembly heap grows too large, and Whisper base on top of
+ * Moonshine and MiniLM is enough to do that. There, Moonshine's live
+ * transcript is final and Whisper is never loaded.
+ */
+export const liteSpeech = () => {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  return (
+    navigator.userAgentData?.mobile === true ||
+    /Android|iPhone|iPad|iPod|Mobile/i.test(ua) ||
+    // iPadOS reports itself as a Mac.
+    (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) ||
+    (navigator.deviceMemory > 0 && navigator.deviceMemory <= 4)
+  );
+};
+/** The models this device loads, in order of need. */
+export const speechKinds = () =>
+  liteSpeech() ? ["live", "embed"] : ["live", "embed", "final"];
+
 let worker,
   seq = 0;
 const pending = new Map();
@@ -44,6 +65,23 @@ function getWorker() {
   } catch {
     return (worker = null);
   }
+  // The worker crashed (usually out of memory) and took its models with it:
+  // fail them and every waiting call, so the studio falls back to the
+  // browser's speech service instead of hanging.
+  worker.onerror = (event) => {
+    event.preventDefault?.();
+    worker.terminate();
+    worker = null;
+    set({
+      live: "error",
+      final: "error",
+      embed: "error",
+      error: event.message || "The speech models stopped.",
+    });
+    for (const job of pending.values())
+      job.reject(new Error("On-device speech stopped."));
+    pending.clear();
+  };
   worker.onmessage = ({ data }) => {
     if (data.type === "status")
       return set({
@@ -83,9 +121,11 @@ let preloaded = false;
 export function preloadSpeech() {
   if (preloaded || !speechSupported()) return;
   preloaded = true;
-  call("load", { kind: "live" })
-    .then(() => call("load", { kind: "embed" }))
-    .then(() => call("load", { kind: "final" }))
+  speechKinds()
+    .reduce(
+      (chain, kind) => chain.then(() => call("load", { kind })),
+      Promise.resolve(),
+    )
     .catch(() => {});
 }
 
@@ -96,6 +136,8 @@ let liveBusy = false;
  * Returns cleaned text, or null when skipped / no speech.
  */
 export async function transcribe(audio, { quality = "live" } = {}) {
+  // No Whisper on lite devices: the live transcript stays as the answer.
+  if (quality === "final" && liteSpeech()) return null;
   const prepared = prepareAudio(audio);
   if (!prepared) return "";
   if (quality === "live") {
