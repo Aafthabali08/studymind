@@ -47,6 +47,46 @@ export const liteSpeech = () => {
     (navigator.deviceMemory > 0 && navigator.deviceMemory <= 4)
   );
 };
+/** A phone or tablet (not a low-memory laptop). */
+export const phoneDevice = () => {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  return (
+    navigator.userAgentData?.mobile === true ||
+    /Android|iPhone|iPad|iPod|Mobile/i.test(ua) ||
+    (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)
+  );
+};
+export const browserRecognition = () =>
+  typeof window === "undefined"
+    ? null
+    : window.SpeechRecognition || window.webkitSpeechRecognition || null;
+/**
+ * Phones answer with the browser's own speech recognition: even with Whisper
+ * tiny, running the open models on a phone fills its memory within seconds of
+ * speaking, and the browser then reloads the tab. The built-in service needs
+ * no model memory. Laptops keep the on-device models.
+ */
+export const phoneSpeech = () => phoneDevice() && Boolean(browserRecognition());
+
+/**
+ * Joins SpeechRecognition results into one transcript. Android Chrome repeats
+ * earlier words in later results ("I built", "I built a dashboard"), so a
+ * result that extends (or repeats) the previous one replaces it.
+ */
+export function joinRecognition(results) {
+  const parts = [];
+  for (const result of Array.from(results || [])) {
+    const text = (result?.[0]?.transcript || "").trim();
+    if (!text) continue;
+    const prev = parts.at(-1)?.toLocaleLowerCase();
+    const lower = text.toLocaleLowerCase();
+    if (prev && lower.startsWith(prev)) parts[parts.length - 1] = text;
+    else if (!prev || !prev.endsWith(lower)) parts.push(text);
+  }
+  return parts.join(" ").replace(/\s+/g, " ");
+}
+
 let worker,
   seq = 0;
 const pending = new Map();
@@ -114,7 +154,7 @@ function call(type, data = {}, transfer = []) {
 /** Loads the models in order of need: live speech, scoring, final speech. */
 let preloaded = false;
 export function preloadSpeech() {
-  if (preloaded || !speechSupported()) return;
+  if (preloaded || !speechSupported() || phoneSpeech()) return;
   preloaded = true;
   call("load", { kind: "live" })
     .then(() => call("load", { kind: "embed" }))
@@ -151,7 +191,13 @@ const dot = (a, b) => a.reduce((n, x, i) => n + x * b[i], 0);
  * (≈0.15 unrelated … ≈0.6 clearly on topic). Null when the model is unavailable.
  */
 export async function semanticRelevance(question, answer) {
-  if (!speechSupported() || !question?.trim() || !answer?.trim()) return null;
+  if (
+    !speechSupported() ||
+    phoneSpeech() ||
+    !question?.trim() ||
+    !answer?.trim()
+  )
+    return null;
   try {
     const [q, a] = await call("embed", { texts: [question, answer] });
     const sim = dot(q, a);

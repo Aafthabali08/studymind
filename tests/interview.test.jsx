@@ -200,16 +200,22 @@ it("shows an instant STAR checklist on review", async () => {
   ).not.toBeInTheDocument();
 });
 
-it("asks a deeper follow-up about the tech in the answer, rates answers and builds a report", async () => {
+it("asks deeper follow-ups when the user chooses Yes, rates answers and builds a report", async () => {
   await setup();
   await userEvent.type(
     screen.getByLabelText("Your transcript"),
     "During my internship I built a dashboard with React and Redis caching. I reduced load time by 40% for 1,200 analysts.",
   );
+  const pill = screen.getByRole("switch", { name: "Follow-up questions" });
+  expect(pill).toHaveAttribute("aria-checked", "false");
+  await userEvent.click(pill);
+  expect(pill).toHaveAttribute("aria-checked", "true");
   await click("Next question");
   expect(screen.getByText(/Follow-up on “React”/)).toBeVisible();
+  expect(screen.getByLabelText(/Deep dive 1 of [5-7]/)).toBeVisible();
+  expect(screen.getByText(/QUESTION 1 OF 3 · FOLLOW-UP 1 OF [5-7]/)).toBeVisible();
   expect(
-    screen.getByRole("heading", { name: /You mentioned React\./ }),
+    screen.getByRole("heading", { name: /deeper on React/ }),
   ).toBeVisible();
   await userEvent.type(
     screen.getByLabelText("Your transcript"),
@@ -221,6 +227,20 @@ it("asks a deeper follow-up about the tech in the answer, rates answers and buil
   expect(
     screen.getByRole("heading", { name: "A stronger answer (STAR)" }),
   ).toBeVisible();
+  // Saying No ends the deep dive: back to the main questions.
+  await userEvent.click(
+    screen.getByRole("switch", { name: "Follow-up questions" }),
+  );
+  await click("Next question");
+  expect(screen.getByText(/QUESTION 2 OF 3$/)).toBeVisible();
+  expect(screen.getByText(/Deep dive on “React”/)).toBeVisible();
+  expect(
+    screen.getByRole("switch", { name: "Follow-up questions" }),
+  ).toHaveAttribute("aria-checked", "false");
+  await userEvent.type(
+    screen.getByLabelText("Your transcript"),
+    "A second answer about teamwork.",
+  );
   await click("Next question");
   await userEvent.type(
     screen.getByLabelText("Your transcript"),
@@ -229,7 +249,7 @@ it("asks a deeper follow-up about the tech in the answer, rates answers and buil
   await click("Finish practice");
   expect(screen.getByText("SESSION COMPLETE")).toBeVisible();
   expect(screen.getByLabelText(/Overall score \d+ out of 100/)).toBeVisible();
-  expect(document.querySelectorAll(".report-item")).toHaveLength(3);
+  expect(document.querySelectorAll(".report-item")).toHaveLength(4);
   expect(
     document.querySelector(".report-item.band-blue, .report-item.band-yellow"),
   ).not.toBeNull();
@@ -242,6 +262,49 @@ it("asks a deeper follow-up about the tech in the answer, rates answers and buil
     ),
     "interview-report.md",
   );
+});
+it("runs a full 5–7 question deep dive, then resumes the main questions automatically", async () => {
+  const random = vi.spyOn(Math, "random").mockReturnValue(0.99); // 7 follow-ups
+  await setup();
+  await userEvent.type(
+    screen.getByLabelText("Your transcript"),
+    "In my final year project I built a booking app with Firebase for 300 students.",
+  );
+  await userEvent.click(
+    screen.getByRole("switch", { name: "Follow-up questions" }),
+  );
+  const asked = new Set();
+  for (let depth = 1; depth <= 7; depth++) {
+    await click("Next question");
+    expect(screen.getByText(`QUESTION 1 OF 3 · FOLLOW-UP ${depth} OF 7`)).toBeVisible();
+    const q = document.querySelector(".interview-question h2").textContent;
+    expect(q).toMatch(/Firebase/);
+    expect(asked.has(q)).toBe(false); // every level asks something new
+    asked.add(q);
+    await userEvent.type(
+      screen.getByLabelText("Your transcript"),
+      `Answer ${depth}: I chose Firebase because our team of 3 had a deadline, and I measured 2 seconds load time.`,
+    );
+  }
+  expect(screen.getByText("Deep dive complete")).toBeVisible();
+  expect(
+    screen.getByRole("switch", { name: "Follow-up questions" }),
+  ).toBeDisabled();
+  await click("Next question");
+  expect(screen.getByText("QUESTION 2 OF 3")).toBeVisible();
+  expect(screen.getByText(/Deep dive on “Firebase”/)).toBeVisible();
+  // Yes again: a new deep dive on this answer.
+  await userEvent.type(
+    screen.getByLabelText("Your transcript"),
+    "I led a hackathon team and we used Docker to ship in 24 hours.",
+  );
+  await userEvent.click(
+    screen.getByRole("switch", { name: "Follow-up questions" }),
+  );
+  await click("Next question");
+  expect(screen.getByText("QUESTION 2 OF 3 · FOLLOW-UP 1 OF 7")).toBeVisible();
+  expect(screen.getByText(/Follow-up on “Docker”/)).toBeVisible();
+  random.mockRestore();
 });
 it("lets the user choose how many questions to be asked", async () => {
   render(<InterviewStudio active notify={vi.fn()} />);
@@ -264,6 +327,9 @@ it("can turn off follow-ups", async () => {
     screen.getByLabelText("Your transcript"),
     "During my internship I built a dashboard with React and Redis caching for the analysts team.",
   );
+  expect(
+    screen.queryByRole("switch", { name: "Follow-up questions" }),
+  ).not.toBeInTheDocument();
   await click("Next question");
   expect(screen.queryByText(/Follow-up on/)).not.toBeInTheDocument();
 });

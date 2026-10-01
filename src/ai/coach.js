@@ -174,6 +174,132 @@ export async function followUpQuestionAI({ question, answer, role, used }) {
   return fallback;
 }
 
+// ---- Deep dives ---------------------------------------------------------------
+// When the candidate chooses to go deeper, the interviewer stays on one topic
+// for a chain of 5–7 follow-ups, each a level deeper, then returns to the
+// resume questions.
+export const DEEP_DIVE_MIN = 5,
+  DEEP_DIVE_MAX = 7;
+/** How many follow-ups this deep dive asks (5–7). */
+export const deepDiveLength = (random = Math.random) =>
+  DEEP_DIVE_MIN +
+  Math.min(
+    DEEP_DIVE_MAX - DEEP_DIVE_MIN,
+    Math.floor(random() * (DEEP_DIVE_MAX - DEEP_DIVE_MIN + 1)),
+  );
+
+/** The topic a deep dive digs into: tech, a number, a challenge or a phrase. */
+export function deepDiveTopic(answer, question = "") {
+  const t = extractTopics(answer);
+  const q = extractTopics(question);
+  return (
+    t.tech[0] ||
+    t.challenge ||
+    t.phrases[0] ||
+    q.tech[0] ||
+    q.phrases[0] ||
+    extractKeywords(answer, 1)[0] ||
+    "that experience"
+  );
+}
+
+// Each level asks for something the previous levels did not: ownership, how
+// it works, why, failure, measurement, scale, reflection.
+const DEPTH_LADDER = [
+  (t) =>
+    `Let's go deeper on ${t}. What exactly was your part in it: what did you personally build, decide or change?`,
+  (t) =>
+    `Walk me through how ${t} actually worked in that situation, step by step, from the start to the result.`,
+  (t) =>
+    `Why ${t}? What alternatives did you consider, and which trade-off made you choose this approach?`,
+  (t) =>
+    `What was the hardest problem you hit with ${t}? How did you find the root cause, and what did you change?`,
+  (t) =>
+    `How did you know ${t} was working? Which numbers, tests or feedback proved the result?`,
+  (t) =>
+    `Imagine the load or scope around ${t} grew ten times overnight. What would break first, and what would you do?`,
+  (t) =>
+    `Looking back on ${t}, what would you do differently today, and what is the one lesson you would teach a junior teammate?`,
+];
+
+/**
+ * The next follow-up in a deep dive (depth 1…n). Prefers a specific detail
+ * from the latest answer (a number, a problem, a tool) tied back to the
+ * topic, else the next level of the depth ladder. Never returns null, so a
+ * deep dive always reaches its length.
+ */
+export function deepFollowUp({ topic, depth, answer = "", asked = [] }) {
+  const t = extractTopics(answer);
+  const seen = asked.join(" ").toLocaleLowerCase();
+  const fresh = (x) => x && !seen.includes(x.toLocaleLowerCase());
+  const level = Math.max(1, depth);
+  const ladder = (i) => DEPTH_LADDER[(i - 1) % DEPTH_LADDER.length](topic);
+  let question = null,
+    detail = null;
+  if (level > 1 && words(answer).length >= 8) {
+    const metric = t.metrics.find(fresh);
+    const tech = t.tech.find(
+      (x) => fresh(x) && x.toLocaleLowerCase() !== topic.toLocaleLowerCase(),
+    );
+    if (level % 2 === 0 && metric) {
+      detail = metric;
+      question = `You said "${metric}". What was the baseline before, how did you measure it, and what part of ${topic} made the difference?`;
+    } else if (level % 2 === 1 && fresh(t.challenge)) {
+      detail = t.challenge;
+      question = `You mentioned a ${t.challenge} with ${topic}. What did you try first, what didn't work, and what finally solved it?`;
+    } else if (tech) {
+      detail = tech;
+      question = `How did ${tech} fit together with ${topic}? What problem would you have had without it?`;
+    }
+  }
+  if (!question || asked.includes(question)) question = ladder(level);
+  for (let i = level + 1; asked.includes(question) && i < level + 8; i++)
+    question = ladder(i);
+  return { question, focus: topic, detail };
+}
+
+/** AI deep-dive follow-up (≤ 7 s), falling back to the built-in one. */
+export async function deepFollowUpAI({ topic, depth, of, history, role }) {
+  const last = history.at(-1) || {};
+  const fallback = deepFollowUp({
+    topic,
+    depth,
+    answer: last.a,
+    asked: history.map((h) => h.q),
+  });
+  if (!geminiAvailable()) return fallback;
+  const reply = await withTimeout(
+    askGemini(
+      [
+        {
+          role: "system",
+          content:
+            `You are a sharp interviewer running a deep dive on "${topic}". This is follow-up ${depth} of ${of}. ` +
+            "Read the whole conversation and ask ONE question that goes a level deeper than anything asked so far, " +
+            "building on the candidate's latest answer (ownership → how it works → why/trade-offs → failures → " +
+            "measurement → scale → reflection). Stay on the topic, never repeat a question. " +
+            'Reply as JSON: {"question": "..."}.',
+        },
+        {
+          role: "user",
+          content:
+            `Role: ${role}\n` +
+            history
+              .map((h, i) => `Q${i + 1}: ${h.q}\nA${i + 1}: ${h.a || "(no answer)"}`)
+              .join("\n"),
+        },
+      ],
+      220,
+    ),
+    7000,
+    null,
+  );
+  const data = parseJSONReply(reply);
+  return data?.question?.length > 20
+    ? { question: String(data.question), focus: topic }
+    : fallback;
+}
+
 // ---- Rating ------------------------------------------------------------------
 /**
  * 0–100 score from length, STAR structure, specificity and relevance, with a
@@ -444,9 +570,13 @@ export function voiceReport(stats, transcript) {
     wpm >= 115 && wpm <= 165 ? 100 : wpm >= 95 && wpm <= 185 ? 75 : n ? 45 : 0;
   const fluency = fillerRate <= 2 ? 100 : fillerRate <= 5 ? 70 : 40;
   const pausing = pausesPerMin <= 3 ? 100 : pausesPerMin <= 6 ? 70 : 45;
-  const steadiness = Math.round(stats.steadiness * 100);
+  // Phones cannot measure volume (see SpeechTiming): score without it.
+  const steadiness =
+    stats.steadiness == null ? null : Math.round(stats.steadiness * 100);
   const score = Math.round(
-    pace * 0.35 + fluency * 0.25 + pausing * 0.2 + steadiness * 0.2,
+    steadiness == null
+      ? (pace * 0.35 + fluency * 0.25 + pausing * 0.2) / 0.8
+      : pace * 0.35 + fluency * 0.25 + pausing * 0.2 + steadiness * 0.2,
   );
   const tips = [];
   if (wpm > 165)
@@ -461,7 +591,7 @@ export function voiceReport(stats, transcript) {
     tips.push(
       `${stats.pauses} long pauses. Plan your first sentence before speaking.`,
     );
-  if (stats.steadiness < 0.6)
+  if (steadiness != null && stats.steadiness < 0.6)
     tips.push("Your volume varied a lot. Keep a steady, confident voice.");
   if (!tips.length) tips.push("Clear, steady delivery. Keep it up.");
   return {
@@ -490,7 +620,10 @@ export function mergeVoiceStats(a, b) {
     avgVolume:
       (a.avgVolume * a.durationSec + b.avgVolume * b.durationSec) / total,
     steadiness:
-      (a.steadiness * a.durationSec + b.steadiness * b.durationSec) / total,
+      a.steadiness == null || b.steadiness == null
+        ? (a.steadiness ?? b.steadiness ?? null)
+        : (a.steadiness * a.durationSec + b.steadiness * b.durationSec) /
+          total,
   };
 }
 

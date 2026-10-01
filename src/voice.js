@@ -185,3 +185,49 @@ export class VoiceMeter {
     };
   }
 }
+
+/**
+ * Voice statistics on phones, where the browser's speech service holds the
+ * microphone (opening it a second time for Web Audio makes recognition stop
+ * after a few seconds). Speaking time and pauses come from when words arrive;
+ * volume steadiness cannot be measured, so it is left out (null).
+ */
+export class SpeechTiming {
+  constructor(now = () => Date.now()) {
+    this.now = now;
+    this.started = now();
+    this.marks = [];
+  }
+  /** Call whenever the recogniser hears words. */
+  mark() {
+    this.marks.push(this.now());
+  }
+  stop() {
+    const end = this.now();
+    const durationSec = (end - this.started) / 1000;
+    if (!this.marks.length) return null;
+    let speaking = 0,
+      pauses = 0,
+      longest = 0;
+    // Words arrive in bursts while someone talks; a gap longer than
+    // PAUSE_SEC between bursts is a pause.
+    let prev = this.marks[0] - 1000;
+    for (const t of this.marks) {
+      const gap = (t - prev) / 1000;
+      if (gap >= PAUSE_SEC) {
+        pauses++;
+        longest = Math.max(longest, gap);
+        speaking += 1;
+      } else speaking += gap;
+      prev = t;
+    }
+    return {
+      durationSec,
+      speakingSec: Math.min(durationSec, speaking),
+      pauses,
+      longestPauseSec: Math.round(longest * 10) / 10,
+      avgVolume: 0,
+      steadiness: null,
+    };
+  }
+}

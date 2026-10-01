@@ -26,6 +26,8 @@ import {
   reviewAnswer,
 } from "./ai/interview";
 import {
+  joinRecognition,
+  phoneSpeech,
   preloadSpeech,
   liteSpeech,
   speechSupported,
@@ -37,8 +39,10 @@ import {
   BANDS,
   betterAnswer,
   bandFor,
-  followUpQuestion,
-  followUpQuestionAI,
+  deepDiveLength,
+  deepDiveTopic,
+  deepFollowUp,
+  deepFollowUpAI,
   betterAnswerAI,
   geminiCoaching,
   geminiInterviewQuestions,
@@ -49,7 +53,7 @@ import {
   scoreAnswer,
   voiceReport,
 } from "./ai/coach";
-import { VoiceMeter, voiceAnalysisSupported } from "./voice";
+import { SpeechTiming, VoiceMeter, voiceAnalysisSupported } from "./voice";
 import { useAuth } from "./auth";
 import Thinking from "./Thinking";
 import Markdown from "./Markdown";
@@ -238,6 +242,38 @@ function ModelLoader({ speech, onSkip }) {
   );
 }
 
+/**
+ * A Yes / No pill: tap to flip it, or swipe the thumb left (No) or right (Yes).
+ */
+export function YesNoPill({ label, checked, onChange, disabled }) {
+  const touch = useRef(null);
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      className={"yes-no-pill" + (checked ? " yes" : "")}
+      onTouchStart={(e) => (touch.current = e.touches[0]?.clientX ?? null)}
+      onTouchEnd={(e) => {
+        const from = touch.current;
+        touch.current = null;
+        const dx = (e.changedTouches[0]?.clientX ?? from) - from;
+        if (from == null || Math.abs(dx) < 18) return;
+        // A swipe sets the side it points to; skip the click that follows.
+        e.preventDefault();
+        onChange(dx > 0);
+      }}
+      onClick={() => onChange(!checked)}
+    >
+      <span className="yes-no-thumb" aria-hidden="true" />
+      <span className="yes-no-option no">No</span>
+      <span className="yes-no-option yes">Yes</span>
+    </button>
+  );
+}
+
 function BandChip({ band, score, pending }) {
   return (
     <span className={`band-chip band-${band}`}>
@@ -254,7 +290,10 @@ export default function InterviewStudio({ active, notify }) {
   const speech = useSpeech();
   // If the live model fails (e.g. a phone ran out of memory), use the
   // browser's own speech service instead.
-  const onDevice = speechSupported() && speech.live !== "error";
+  // Phones use the browser's speech service: the on-device models use more
+  // memory than a phone browser allows, and it reloads the tab mid-answer.
+  const phone = useMemo(phoneSpeech, []);
+  const onDevice = speechSupported() && !phone && speech.live !== "error";
   // The studio waits for its three open models (see ModelLoader).
   const [skipLoader, setSkipLoader] = useState(false);
   const loadingModels = active && onDevice && !skipLoader && !modelsReady(speech);
@@ -263,6 +302,8 @@ export default function InterviewStudio({ active, notify }) {
     [format, setFormat] = useState("behavioral"),
     [count, setCount] = useState(3),
     [adaptive, setAdaptive] = useState(true),
+    // "Follow up on this answer?" — Yes starts (or continues) a deep dive.
+    [digDeeper, setDigDeeper] = useState(false),
     [resume, setResume] = useState(null), // { fileName, text }
     [readingResume, setReadingResume] = useState(false),
     [preparing, setPreparing] = useState(false),
@@ -299,6 +340,7 @@ export default function InterviewStudio({ active, notify }) {
     coachAbort = useRef(null),
     ratingsRef = useRef({}),
     indexRef = useRef(0),
+    wakeLock = useRef(null),
     resumeInput = useRef(null);
   answersRef.current = answers;
   questionsRef.current = questions;
@@ -355,6 +397,8 @@ export default function InterviewStudio({ active, notify }) {
       current?.stop();
     } catch {}
     clearInterval(clock.current);
+    wakeLock.current?.release?.().catch?.(() => {});
+    wakeLock.current = null;
     if (meterEl.current) meterEl.current.style.setProperty("--level", "0");
     const m = meter.current;
     meter.current = null;
@@ -389,6 +433,7 @@ export default function InterviewStudio({ active, notify }) {
     setRatings({});
     setVoiceStats({});
     setMeta({});
+    setDigDeeper(false);
     setComplete(false);
   }
   function updateAt(i, text) {
@@ -525,6 +570,25 @@ export default function InterviewStudio({ active, notify }) {
   }
 
   // ---- Moving through the interview -----------------------------------------
+  /**
+   * The deep dive to continue after question i, if the user chose "Yes":
+   * a new one on this answer's topic, or the next level of the current one.
+   * After its 5–7 follow-ups the interview returns to the main questions.
+   */
+  function deepDiveAfter(i) {
+    if (!adaptive || !digDeeper) return null;
+    const m = meta[i] || {};
+    if (m.followUp)
+      return m.depth < m.of
+        ? { topic: m.focus, depth: m.depth + 1, of: m.of, root: m.root }
+        : null;
+    return {
+      topic: deepDiveTopic(answers[i] || "", questions[i]),
+      depth: 1,
+      of: deepDiveLength(),
+      root: i,
+    };
+  }
   async function next() {
     const i = index;
     const answer = answers[i] || "";
@@ -532,35 +596,44 @@ export default function InterviewStudio({ active, notify }) {
     rate(i, questions[i], answer);
     if (i < questions.length - 1) return setIndex(i + 1);
     const total = clampCount(count);
-    if (questions.length >= total) return finish();
     const token = session.current;
-    let follow = null;
-    const followUps = Object.values(meta).filter((m) => m.followUp).length;
-    // Dig deeper into what was just said (never two follow-ups in a row).
-    if (adaptive && !meta[i]?.followUp && followUps < Math.ceil(total / 2)) {
-      if (questionModelAvailable()) {
-        setPreparingNext(true);
-        follow = await followUpQuestionAI({
-          question: questions[i],
-          answer,
-          role,
-          used: usedFocus.current,
-        });
-        setPreparingNext(false);
-        if (session.current !== token) return;
-      } else follow = followUpQuestion(answer, usedFocus.current);
-    }
+    const dive = deepDiveAfter(i);
     let nextQuestion,
       nextMeta = {};
-    if (follow) {
-      usedFocus.current.add(follow.focus.toLocaleLowerCase());
+    if (dive) {
+      const history = questions
+        .slice(dive.root, i + 1)
+        .map((q, k) => ({ q, a: answers[dive.root + k] || "" }));
+      let follow;
+      if (questionModelAvailable()) {
+        setPreparingNext(true);
+        follow = await deepFollowUpAI({ ...dive, history, role });
+        setPreparingNext(false);
+        if (session.current !== token) return;
+      } else
+        follow = deepFollowUp({
+          topic: dive.topic,
+          depth: dive.depth,
+          answer,
+          asked: history.map((h) => h.q),
+        });
       nextQuestion = follow.question;
-      nextMeta = { followUp: true, focus: follow.focus };
+      nextMeta = {
+        followUp: true,
+        focus: dive.topic,
+        depth: dive.depth,
+        of: dive.of,
+        root: dive.root,
+      };
     } else {
+      const lastDive = meta[i]?.followUp ? meta[i].focus : null;
+      if (baseUsed.current >= total) return finish();
       nextQuestion = plan[baseUsed.current];
+      if (!nextQuestion) return finish();
       baseUsed.current++;
+      nextMeta = lastDive ? { afterDive: lastDive } : {};
+      setDigDeeper(false);
     }
-    if (!nextQuestion) return finish();
     setQuestions((q) => [...q, nextQuestion]);
     setMeta((m) => ({ ...m, [i + 1]: nextMeta }));
     setIndex(i + 1);
@@ -710,19 +783,40 @@ export default function InterviewStudio({ active, notify }) {
     const token = ++generation.current;
     const i = index;
     let base = transcript.trim(),
-      restarts = 0;
+      restarts = 0,
+      quickEnds = 0,
+      listening = 0;
     wantRecording.current = true;
+    // Phones: the speech service owns the microphone, so voice stats come
+    // from when words arrive (see SpeechTiming), and the screen stays awake.
+    const timing = phone ? new SpeechTiming() : null;
+    if (timing) {
+      timing.index = i;
+      meter.current = timing;
+      navigator.wakeLock
+        ?.request?.("screen")
+        .then((lock) => {
+          if (generation.current === token) wakeLock.current = lock;
+          else lock.release().catch(() => {});
+        })
+        .catch(() => {});
+    }
     const listen = () => {
       const r = new SR();
       recognition.current = r;
+      listening = Date.now();
       r.lang = "en-US";
       r.continuous = true;
       r.interimResults = true;
       r.onresult = (event) => {
         if (generation.current !== token) return;
-        const spoken = Array.from(event.results)
-          .map((result) => result[0].transcript)
-          .join(" ");
+        const spoken = joinRecognition(event.results);
+        if (timing) {
+          timing.mark();
+          const el = meterEl.current;
+          el?.style.setProperty("--level", "0.6");
+          setTimeout(() => el?.style.setProperty("--level", "0.15"), 260);
+        }
         updateAt(
           i,
           [base, spoken].filter(Boolean).join(" ").replace(/\s+/g, " "),
@@ -731,6 +825,13 @@ export default function InterviewStudio({ active, notify }) {
       r.onerror = (event) => {
         if (generation.current !== token) return;
         if (event.error === "no-speech" || event.error === "aborted") return; // onend restarts
+        // Phone speech services drop out briefly; onend tries again.
+        if (
+          phone &&
+          (event.error === "network" || event.error === "audio-capture") &&
+          quickEnds < 3
+        )
+          return;
         notify(
           event.error === "not-allowed"
             ? "Microphone access was denied. You can type your answer instead."
@@ -741,17 +842,39 @@ export default function InterviewStudio({ active, notify }) {
       r.onend = () => {
         if (generation.current !== token) return;
         // Browsers end recognition after a silence: carry on seamlessly.
-        if (wantRecording.current && restarts < 40) {
+        // Phones end it every few seconds, so they restart for as long as
+        // the user is recording, unless it keeps ending at once.
+        quickEnds = Date.now() - listening < 1000 ? quickEnds + 1 : 0;
+        if (
+          wantRecording.current &&
+          (phone ? quickEnds < 5 : restarts < 40)
+        ) {
           restarts++;
           base = (answersRef.current[i] || "").trim();
-          setTimeout(() => {
-            if (generation.current !== token || !wantRecording.current) return;
-            try {
-              listen();
-            } catch {
-              stopRecording();
-            }
-          }, 120);
+          setTimeout(
+            () => {
+              if (generation.current !== token || !wantRecording.current)
+                return;
+              try {
+                listen();
+              } catch {
+                stopRecording();
+                if (phone)
+                  notify(
+                    "Listening paused. Your transcript is kept: tap Answer with voice to continue.",
+                  );
+              }
+            },
+            phone ? 250 : 120,
+          );
+          return;
+        }
+        if (phone) {
+          stopRecording();
+          if (quickEnds >= 5)
+            notify(
+              "Your phone's speech service stopped listening. Your transcript is kept: tap Answer with voice to try again.",
+            );
           return;
         }
         recognition.current = null;
@@ -778,7 +901,7 @@ export default function InterviewStudio({ active, notify }) {
         timerEl.current.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
       }
     }, 250);
-    if (voiceAnalysisSupported()) {
+    if (!phone && voiceAnalysisSupported()) {
       const m = new VoiceMeter();
       m.index = i;
       meter.current = m;
@@ -831,7 +954,17 @@ export default function InterviewStudio({ active, notify }) {
   }
   const coachState = coaching[index];
   const total = clampCount(count);
-  const isLast = index === total - 1;
+  // Main (resume / behavioral) questions; deep-dive follow-ups come on top.
+  const mainAt = questions.reduce(
+    (list, _, i) => (meta[i]?.followUp ? list : [...list, i]),
+    [],
+  );
+  const mainNo = mainAt.filter((i) => i <= index).length;
+  const current = meta[index] || {};
+  const atFrontier = started && index === questions.length - 1;
+  const diveDone = current.followUp && current.depth >= current.of;
+  const goingDeeper = adaptive && digDeeper && !diveDone;
+  const isLast = atFrontier && !goingDeeper && mainAt.length >= total;
 
   // ---- Report ----------------------------------------------------------------
   const report = useMemo(() => {
@@ -885,7 +1018,7 @@ export default function InterviewStudio({ active, notify }) {
     ];
     if (report.voice)
       lines.push(
-        `## Voice\n- Score: ${report.voice.score}/100 (${BANDS[report.voice.band].label})\n- Pace: ${report.voice.wpm} words/min\n- Pauses: ${report.voice.pauses}\n- Filler words: ${report.voice.fillers}\n- Steadiness: ${report.voice.steadiness}%\n${report.voice.tips.map((t) => `- ${t}`).join("\n")}`,
+        `## Voice\n- Score: ${report.voice.score}/100 (${BANDS[report.voice.band].label})\n- Pace: ${report.voice.wpm} words/min\n- Pauses: ${report.voice.pauses}\n- Filler words: ${report.voice.fillers}\n${report.voice.steadiness != null ? `- Steadiness: ${report.voice.steadiness}%\n` : ""}${report.voice.tips.map((t) => `- ${t}`).join("\n")}`,
       );
     report.items.forEach((x, i) =>
       lines.push(
@@ -1086,23 +1219,23 @@ export default function InterviewStudio({ active, notify }) {
               />
             </div>
           </div>
-          <label className="toggle-row">
-            <input
-              type="checkbox"
-              checked={adaptive}
-              onChange={(e) => {
-                reset();
-                setAdaptive(e.target.checked);
-              }}
-            />
+          <div className="toggle-row">
             <span>
               <strong>Deeper follow-up questions</strong>
               <small>
-                Ask situation-based questions about the tech and keywords in my
-                answers.
+                After any answer, choose Yes to get 5–7 follow-ups that dig
+                deeper into it, then carry on with your main questions.
               </small>
             </span>
-          </label>
+            <YesNoPill
+              label="Deeper follow-up questions"
+              checked={adaptive}
+              onChange={(on) => {
+                reset();
+                setAdaptive(on);
+              }}
+            />
+          </div>
           <button
             className="primary"
             disabled={!role.trim() || preparing}
@@ -1131,25 +1264,24 @@ export default function InterviewStudio({ active, notify }) {
               {complete
                 ? "SESSION COMPLETE"
                 : started
-                  ? `QUESTION ${index + 1} OF ${total}`
+                  ? `QUESTION ${mainNo} OF ${total}` +
+                    (current.followUp
+                      ? ` · FOLLOW-UP ${current.depth} OF ${current.of}`
+                      : "")
                   : "02 / FIND YOUR VOICE"}
             </span>
             <Mic size={20} />
           </div>
           {started && !complete && (
             <div className="interview-progress" aria-hidden="true">
-              {Array.from({ length: total }, (_, i) => {
-                const r = ratings[i];
+              {Array.from({ length: total }, (_, k) => {
+                const r = ratings[mainAt[k]];
                 return (
                   <i
-                    key={i}
+                    key={k}
                     className={
-                      (i === index ? "current " : "") +
-                      (r
-                        ? `band-${r.band}`
-                        : i < questions.length
-                          ? "asked"
-                          : "")
+                      (k === mainNo - 1 ? "current " : "") +
+                      (r ? `band-${r.band}` : k < mainAt.length ? "asked" : "")
                     }
                   />
                 );
@@ -1210,10 +1342,12 @@ export default function InterviewStudio({ active, notify }) {
                       <b>{report.voice.fillers}</b>
                       <small>filler words</small>
                     </div>
-                    <div>
-                      <b>{report.voice.steadiness}%</b>
-                      <small>volume steadiness</small>
-                    </div>
+                    {report.voice.steadiness != null && (
+                      <div>
+                        <b>{report.voice.steadiness}%</b>
+                        <small>volume steadiness</small>
+                      </div>
+                    )}
                   </div>
                   <ul className="checklist">
                     {report.voice.tips.map((t) => (
@@ -1238,7 +1372,8 @@ export default function InterviewStudio({ active, notify }) {
                     <span className="q-num">Q{i + 1}</span>
                     {x.meta.followUp && (
                       <span className="tag">
-                        <CornerDownRight size={12} /> Follow-up · {x.meta.focus}
+                        <CornerDownRight size={12} /> Follow-up{" "}
+                        {x.meta.depth}/{x.meta.of} · {x.meta.focus}
                       </span>
                     )}
                     {x.r && (
@@ -1325,10 +1460,32 @@ export default function InterviewStudio({ active, notify }) {
                 >
                   <Mic size={32} />
                 </div>
-                {started && meta[index]?.followUp && (
-                  <span className="followup-tag">
-                    <CornerDownRight size={13} /> Follow-up on “
-                    {meta[index].focus}”
+                {started && current.followUp && (
+                  <div className="deep-dive-head">
+                    <span className="followup-tag">
+                      <CornerDownRight size={13} /> Follow-up on “
+                      {current.focus}”
+                    </span>
+                    <span
+                      className="deep-dive-steps"
+                      aria-label={`Deep dive ${current.depth} of ${current.of}`}
+                    >
+                      {Array.from({ length: current.of }, (_, k) => (
+                        <i
+                          key={k}
+                          className={k < current.depth ? "done" : ""}
+                        />
+                      ))}
+                      <small>
+                        {current.depth} / {current.of}
+                      </small>
+                    </span>
+                  </div>
+                )}
+                {started && current.afterDive && (
+                  <span className="followup-tag back">
+                    <Check size={13} /> Deep dive on “{current.afterDive}”
+                    done · back to your questions
                   </span>
                 )}
                 <h2>
@@ -1391,7 +1548,9 @@ export default function InterviewStudio({ active, notify }) {
                   <p className="fine">
                     {onDevice
                       ? "Your voice is transcribed on this device by open models (Moonshine live, Whisper final). No audio is uploaded."
-                      : "This browser can't run the on-device speech models, so its built-in speech service is used."}{" "}
+                      : phone
+                        ? "On phones your browser's own speech service transcribes your answer: it is lighter and keeps going for long answers."
+                        : "This browser can't run the on-device speech models, so its built-in speech service is used."}{" "}
                     Typing is always available.
                   </p>
                   {polishing[index] && (
@@ -1411,6 +1570,32 @@ export default function InterviewStudio({ active, notify }) {
                       placeholder="Your words will appear here. You can also type your answer."
                     />
                   </label>
+                  {adaptive && atFrontier && !preparingNext && (
+                    <div className="follow-choice">
+                      <div>
+                        <strong id="follow-choice-label">
+                          {current.followUp
+                            ? diveDone
+                              ? "Deep dive complete"
+                              : "Keep going deeper?"
+                            : "Follow up on this answer?"}
+                        </strong>
+                        <small>
+                          {current.followUp
+                            ? diveDone
+                              ? "Next: back to your main questions."
+                              : `Yes: follow-up ${current.depth + 1} of ${current.of} on “${current.focus}”. No: back to your main questions.`
+                            : "Yes: 5–7 deeper follow-ups on this topic, then back to your main questions."}
+                        </small>
+                      </div>
+                      <YesNoPill
+                        label="Follow-up questions"
+                        checked={goingDeeper}
+                        disabled={diveDone || recording}
+                        onChange={setDigDeeper}
+                      />
+                    </div>
+                  )}
                   {preparingNext ? (
                     <Thinking
                       label="Thinking of a deeper follow-up…"

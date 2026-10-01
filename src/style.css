@@ -3919,6 +3919,130 @@ button.local-label {
   line-height: 1.5;
 }
 
+.setup .toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 20px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--soft);
+  font-size: 13px;
+}
+
+/* Yes / No pill: tap or swipe. The thumb slides under the chosen side. */
+.yes-no-pill {
+  position: relative;
+  flex: none;
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  width: 108px;
+  height: 38px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--solid);
+  font-size: 13px;
+  font-weight: 600;
+  touch-action: pan-y;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+.yes-no-pill:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.yes-no-thumb {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  border-radius: 999px;
+  background: var(--text);
+  transition: transform 0.22s cubic-bezier(0.3, 0.7, 0.3, 1);
+}
+.yes-no-pill.yes .yes-no-thumb {
+  transform: translateX(100%);
+  background: var(--band-blue);
+}
+.yes-no-option {
+  position: relative;
+  text-align: center;
+  color: var(--muted);
+  transition: color 0.22s;
+}
+.yes-no-pill:not(.yes) .yes-no-option.no,
+.yes-no-pill.yes .yes-no-option.yes {
+  color: var(--solid);
+}
+.yes-no-pill.yes .yes-no-option.yes {
+  color: #fff;
+}
+.follow-choice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--soft);
+}
+.follow-choice strong,
+.follow-choice small {
+  display: block;
+}
+.follow-choice small {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 3px;
+  line-height: 1.5;
+}
+.deep-dive-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.deep-dive-head .followup-tag {
+  margin-bottom: 0;
+}
+.deep-dive-steps {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.deep-dive-steps i {
+  width: 14px;
+  height: 5px;
+  border-radius: 5px;
+  background: var(--line);
+}
+.deep-dive-steps i.done {
+  background: var(--band-blue);
+}
+.deep-dive-steps small {
+  margin-left: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.followup-tag.back {
+  color: var(--text);
+}
+@media (prefers-reduced-motion: reduce) {
+  .yes-no-thumb,
+  .yes-no-option {
+    transition: none;
+  }
+}
+
 /* Live voice meter: only transform/opacity animate, so it stays smooth. */
 .live-voice {
   --level: 0;
