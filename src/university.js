@@ -32,7 +32,7 @@ export const viewableInBrowser = (mime) => /^(application\/pdf|image\/|text\/)/.
 export const DEFAULT_OPTIONS = {
   universities: ["GITAM VIZAG"],
   degrees: ["CSE CORE"],
-  years: ["1", "2", "3", "4"],
+  years: ["1", "2", "3", "4", "5"],
 };
 /** Which exam a subject, folder or file is for. */
 export const EXAMS = {
@@ -349,6 +349,151 @@ export async function deleteNodes(nodes, id) {
     await batch.commit();
   }
   return all.map((n) => n.id);
+}
+
+// ---- Transfer (cut and paste) and copy -------------------------------------------------
+// A subject, folder or file moves or is copied with everything inside it to
+// another university / degree / year, at the top level (as a subject) or into
+// a subject or folder there. A whole course can be moved, copied or swapped.
+const sameScope = (a, b) =>
+  a.university === b.university && a.degree === b.degree && String(a.year) === String(b.year);
+
+/** Why a node can't go to a place (null when it can). */
+export function transferProblem(nodes, node, { scope, parentId = null }) {
+  if (!node) return "Choose what to transfer.";
+  if (node.kind === "file" && !parentId) return "A file has to go inside a subject or folder.";
+  if (sameScope(node, scope)) {
+    if ((node.parentId || null) === (parentId || null)) return "It is already there.";
+    if (parentId && descendants(nodes, node.id).some((n) => n.id === parentId))
+      return "A folder can't be moved inside itself.";
+  }
+  return null;
+}
+
+/** At the top level a folder becomes a subject; inside, a subject becomes a folder. */
+const kindAt = (node, isRoot, parentId) =>
+  node.kind === "file" ? "file" : isRoot ? (parentId ? "folder" : "subject") : node.kind === "subject" ? "folder" : node.kind;
+const scopeFields = (scope) => ({
+  university: scope.university,
+  degree: scope.degree,
+  year: String(scope.year),
+});
+
+/** Updates that move a node (and everything inside) to a place. */
+export function planMove(nodes, id, { scope, parentId = null }) {
+  return descendants(nodes, id).map((n, i) => ({
+    id: n.id,
+    patch: {
+      ...scopeFields(scope),
+      kind: kindAt(n, i === 0, parentId),
+      ...(i === 0 ? { parentId: parentId || null } : {}),
+    },
+  }));
+}
+
+/**
+ * New nodes that copy a node (and everything inside) to a place. `newId`
+ * makes ids; a copy next to its original is named "… (copy)".
+ */
+export function planCopy(nodes, id, { scope, parentId = null }, newId) {
+  const all = descendants(nodes, id);
+  const ids = Object.fromEntries(all.map((n) => [n.id, newId()]));
+  const beside = sameScope(all[0], scope) && (all[0].parentId || null) === (parentId || null);
+  return all.map((n, i) => ({
+    from: n,
+    id: ids[n.id],
+    data: {
+      kind: kindAt(n, i === 0, parentId),
+      name: i === 0 && beside ? `${n.name} (copy)` : n.name,
+      parentId: i === 0 ? parentId || null : ids[n.parentId],
+      exam: n.exam || "both",
+      ...scopeFields(scope),
+      ...(n.icon ? { icon: n.icon } : {}),
+      ...(n.kind === "file"
+        ? {
+            fileName: n.fileName || "",
+            mime: n.mime || "",
+            size: n.size || 0,
+            pageCount: n.pageCount || 0,
+            imageCount: n.imageCount || 0,
+            blobCount: n.blobCount || 0,
+          }
+        : {}),
+    },
+  }));
+}
+
+async function commitUpdates(updates) {
+  const { db, fns } = await firebase();
+  const f = fns.firestore;
+  for (let i = 0; i < updates.length; i += 400) {
+    const batch = f.writeBatch(db);
+    updates.slice(i, i + 400).forEach(({ id, patch }) => batch.update(f.doc(db, "uniNodes", id), patch));
+    await batch.commit();
+  }
+}
+
+/** Transfer (cut and paste). Returns the moved nodes as they are now. */
+export async function moveNode(nodes, id, target) {
+  const problem = transferProblem(nodes, nodes.find((n) => n.id === id), target);
+  if (problem) throw new Error(problem);
+  const updates = planMove(nodes, id, target);
+  await commitUpdates(updates);
+  const byId = Object.fromEntries(updates.map((u) => [u.id, u.patch]));
+  return descendants(nodes, id).map((n) => ({ ...n, ...byId[n.id] }));
+}
+
+/** Copy (copy and paste), files with their text, figures and original. */
+export async function copyNode(nodes, id, target, onProgress) {
+  const node = nodes.find((n) => n.id === id);
+  const problem = transferProblem(nodes, node, target);
+  if (problem && problem !== "It is already there.") throw new Error(problem);
+  const { db, fns } = await firebase();
+  const f = fns.firestore;
+  const plan = planCopy(nodes, id, target, () => f.doc(f.collection(db, "uniNodes")).id);
+  let done = 0;
+  for (const item of plan) {
+    const ref = f.doc(db, "uniNodes", item.id);
+    if (item.from.kind === "file") {
+      // Text, figures and original first; the node last, so a half-finished
+      // copy never shows.
+      const src = f.doc(db, "uniNodes", item.from.id);
+      const subs = await Promise.all(
+        ["parts", "images", "blobs"].map(async (c) => [c, await f.getDocs(f.collection(src, c))]),
+      );
+      const writes = subs.flatMap(([c, snap]) => snap.docs.map((d) => [f.doc(ref, c, d.id), d.data()]));
+      for (let i = 0; i < writes.length; i += 6) {
+        const batch = f.writeBatch(db);
+        writes.slice(i, i + 6).forEach(([r, data]) => batch.set(r, data));
+        await batch.commit();
+      }
+    }
+    await f.setDoc(ref, { ...item.data, createdAt: f.serverTimestamp() });
+    onProgress?.(++done, plan.length);
+  }
+  return plan.map((p) => ({ id: p.id, ...p.data, hasOriginal: Boolean(p.data.blobCount) }));
+}
+
+/**
+ * A whole course to another one: "move" (cut and paste), "copy", or "swap"
+ * (the two courses exchange their material). Returns counts.
+ */
+export async function transferCourse(from, to, mode, onProgress) {
+  if (sameScope(from, to)) throw new Error("Choose a different university, degree or year.");
+  const [mine, theirs] = await Promise.all([loadNodes(from), loadNodes(to)]);
+  if (!mine.length && mode !== "swap") throw new Error("There is nothing to transfer in this course.");
+  const subjects = mine.filter((n) => !n.parentId);
+  if (mode === "copy") {
+    let done = 0;
+    for (const s of subjects) await copyNode(mine, s.id, { scope: to }, () => onProgress?.(++done));
+    return { moved: 0, copied: mine.length, back: 0 };
+  }
+  const updates = [
+    ...mine.map((n) => ({ id: n.id, patch: scopeFields(to) })),
+    ...(mode === "swap" ? theirs.map((n) => ({ id: n.id, patch: scopeFields(from) })) : []),
+  ];
+  await commitUpdates(updates);
+  return { moved: mine.length, copied: 0, back: mode === "swap" ? theirs.length : 0 };
 }
 
 // ---- Each user's study material for a shared file ------------------------------------

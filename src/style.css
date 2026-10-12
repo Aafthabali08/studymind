@@ -5934,3 +5934,50 @@ button.local-label {
   justify-content: space-between;
   margin-top: 6px;
 }
+
+/* University: transfer / copy */
+.uni-select-admin {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+.transfer-dialog {
+  width: min(560px, 100%);
+}
+.transfer-actions {
+  margin: 14px 0 6px;
+}
+.transfer-fields {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 0.8fr;
+  gap: 10px;
+  margin: 12px 0;
+}
+.transfer-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 550;
+  min-width: 0;
+}
+.transfer-fields select {
+  width: 100%;
+}
+.transfer-place {
+  grid-column: 1 / -1;
+}
+.transfer-summary {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--soft);
+  font-size: 13px;
+}
+@media (max-width: 540px) {
+  .transfer-fields {
+    grid-template-columns: 1fr 1fr;
+  }
+  .transfer-fields label:first-child {
+    grid-column: 1 / -1;
+  }
+}

@@ -14,6 +14,7 @@ import {
   Code2,
   Cpu,
   Database,
+  ArrowRightLeft,
   ExternalLink,
   FileImage,
   FileQuestion,
@@ -66,6 +67,10 @@ import {
   searchNodes,
   updateNode,
   viewableInBrowser,
+  copyNode,
+  moveNode,
+  transferCourse,
+  transferProblem,
 } from "./university";
 import { fileExtension } from "./logic";
 
@@ -279,6 +284,193 @@ function ExamBadge({ exam }) {
  * file to study it (with Gemini). The admin adds, renames and deletes
  * subjects, folders and files, uploads files, and edits the options.
  */
+const ACTIONS = {
+  move: ["Transfer", "Cut and paste: it moves there and leaves here."],
+  copy: ["Copy", "Copy and paste: a copy goes there; this one stays."],
+  swap: ["Swap", "The two courses exchange all their material."],
+};
+
+/**
+ * Admin: transfer (cut and paste) or copy a subject, folder or file with
+ * everything inside it, or a whole course, to another university / degree /
+ * year, and (for one item) into a subject or folder there.
+ */
+function TransferDialog({ node, nodes, options, from, onClose, onDone, notify }) {
+  const course = !node;
+  const nextYear = options.years[options.years.indexOf(String(from.year)) + 1];
+  const [action, setAction] = useState("move");
+  const [target, setTarget] = useState({
+    university: from.university,
+    degree: from.degree,
+    year: course ? nextYear || options.years.find((y) => y !== String(from.year)) || from.year : String(from.year),
+  });
+  const [parentId, setParentId] = useState(node && node.kind !== "subject" ? node.parentId : null);
+  const [targetNodes, setTargetNodes] = useState(null);
+  const [busy, setBusy] = useState("");
+  const same =
+    target.university === from.university && target.degree === from.degree && String(target.year) === String(from.year);
+  useEffect(() => {
+    let live = true;
+    setTargetNodes(same ? nodes : null);
+    if (!same)
+      loadNodes(target)
+        .then((list) => live && setTargetNodes(list))
+        .catch(() => live && setTargetNodes([]));
+    return () => {
+      live = false;
+    };
+  }, [target.university, target.degree, target.year]);
+  // Where it can go there: the top level, or any subject or folder.
+  const inside = new Set(node && same ? descendants(nodes, node.id).map((n) => n.id) : []);
+  const places = (targetNodes || [])
+    .filter((n) => n.kind !== "file" && !inside.has(n.id))
+    .map((n) => ({ id: n.id, label: pathOf(targetNodes, n.id).map((p) => p.name).join(" › ") }))
+    .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
+  useEffect(() => {
+    if (parentId && targetNodes && !places.some((p) => p.id === parentId)) setParentId(node?.kind === "file" ? places[0]?.id || null : null);
+    if (!parentId && node?.kind === "file" && places.length) setParentId(places[0].id);
+  }, [targetNodes]);
+  const where = `${target.university} · ${target.degree} · Year ${target.year}`;
+  const placeLabel = parentId ? places.find((p) => p.id === parentId)?.label : "the top level";
+  const inner = node ? descendants(nodes, node.id).slice(1) : [];
+  const what = node
+    ? `“${node.name}”${inner.length ? ` and everything in it (${plural(inner.filter((n) => n.kind !== "file").length, "folder")}, ${plural(inner.filter((n) => n.kind === "file").length, "file")})` : ""}`
+    : `all of ${from.university} · ${from.degree} · Year ${from.year} (${plural(nodes.length, "item")})`;
+  const problem = course
+    ? same
+      ? "Choose a different university, degree or year."
+      : null
+    : action === "move"
+      ? transferProblem(nodes, node, { scope: target, parentId })
+      : node.kind === "file" && !parentId
+        ? "A file has to go inside a subject or folder."
+        : null;
+
+  async function run() {
+    if (course && action !== "copy") {
+      const msg =
+        action === "swap"
+          ? `Swap all material between Year ${from.year} and ${where}?`
+          : `Move ${what} to ${where}? It will no longer be in Year ${from.year}.`;
+      if (!window.confirm(msg)) return;
+    }
+    setBusy("Working…");
+    try {
+      if (course) {
+        const r = await transferCourse(from, target, action, (n) => setBusy(`Copied ${n}…`));
+        notify(
+          action === "swap"
+            ? `Swapped: ${plural(r.moved, "item")} moved to ${where} and ${plural(r.back, "item")} came back.`
+            : action === "copy"
+              ? `Copied ${plural(r.copied, "item")} to ${where}.`
+              : `Moved ${plural(r.moved, "item")} to ${where}.`,
+        );
+        onDone({ reload: true });
+      } else if (action === "move") {
+        const moved = await moveNode(nodes, node.id, { scope: target, parentId });
+        notify(`Moved “${node.name}” to ${where} › ${placeLabel}.`);
+        onDone({ moved, sameScope: same });
+      } else {
+        const copies = await copyNode(nodes, node.id, { scope: target, parentId }, (n, total) =>
+          setBusy(`Copying ${n} of ${total}…`),
+        );
+        notify(`Copied “${node.name}” to ${where} › ${placeLabel}.`);
+        onDone({ copies, sameScope: same });
+      }
+    } catch (e) {
+      notify(e.message || "The transfer did not finish. Try again.");
+      setBusy("");
+    }
+  }
+
+  return (
+    <div className="modal-backdrop transfer-backdrop" onClick={() => !busy && onClose()}>
+      <section
+        className="modal panel transfer-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="transfer-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button className="close" aria-label="Close transfer" disabled={Boolean(busy)} onClick={onClose}>
+          <X size={18} />
+        </button>
+        <span className="eyebrow">ADMIN · {course ? "WHOLE COURSE" : node.kind.toUpperCase()}</span>
+        <h2 id="transfer-title">{course ? "Transfer this course" : `Transfer or copy “${node.name}”`}</h2>
+        <div className="segmented transfer-actions" role="group" aria-label="Action">
+          {Object.entries(ACTIONS)
+            .filter(([k]) => course || k !== "swap")
+            .map(([k, [label]]) => (
+              <button key={k} aria-pressed={action === k} className={action === k ? "active" : ""} onClick={() => setAction(k)}>
+                {label}
+              </button>
+            ))}
+        </div>
+        <p className="fine">{ACTIONS[action][1]}</p>
+        <div className="transfer-fields">
+          <label>
+            University
+            <select value={target.university} onChange={(e) => setTarget((t) => ({ ...t, university: e.target.value }))}>
+              {options.universities.map((u) => (
+                <option key={u}>{u}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Degree
+            <select value={target.degree} onChange={(e) => setTarget((t) => ({ ...t, degree: e.target.value }))}>
+              {options.degrees.map((d) => (
+                <option key={d}>{d}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Year
+            <select value={target.year} onChange={(e) => setTarget((t) => ({ ...t, year: e.target.value }))}>
+              {options.years.map((y) => (
+                <option key={y} value={y}>
+                  Year {y}
+                </option>
+              ))}
+            </select>
+          </label>
+          {!course && (
+            <label className="transfer-place">
+              Put it in
+              <select
+                value={parentId || ""}
+                disabled={!targetNodes}
+                onChange={(e) => setParentId(e.target.value || null)}
+              >
+                {node.kind !== "file" && <option value="">Top level (as a subject)</option>}
+                {places.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
+        <p className="transfer-summary" role="status">
+          {targetNodes == null
+            ? "Loading the target course…"
+            : problem ||
+              `${ACTIONS[action][0]} ${what} ${action === "swap" ? "with" : "to"} ${where}${course ? "" : ` › ${placeLabel}`}.`}
+        </p>
+        <div className="button-row">
+          <button className="primary" disabled={Boolean(problem) || Boolean(busy) || targetNodes == null} onClick={run}>
+            <ArrowRightLeft size={16} /> {busy || `${ACTIONS[action][0]} now`}
+          </button>
+          <button className="secondary" disabled={Boolean(busy)} onClick={onClose}>
+            Cancel
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export default function UniversityPage({ active, admin, notify, onOpenFile }) {
   const saved = readChoice();
   const [options, setOptions] = useState(DEFAULT_OPTIONS);
@@ -299,6 +491,7 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
   const [uploads, setUploads] = useState([]);
   const [opening, setOpening] = useState(null);
   const [iconFor, setIconFor] = useState(null); // node id with the picker open
+  const [transfer, setTransfer] = useState(null); // { node } or { course: true }
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
   const fileInput = useRef(null);
@@ -348,10 +541,16 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
     loadedFor.current = key;
     setFolderId(null);
     setSearched("");
+    setNodes([]); // the old course's cards must not stay clickable
     reload();
   }, [active, choice.university, choice.degree, choice.year]);
 
   const current = nodes.find((n) => n.id === folderId) || null;
+  // A folder that isn't in this course (moved away, or another course
+  // loaded): back to the subjects.
+  useEffect(() => {
+    if (status === "ready" && folderId && !current) setFolderId(null);
+  }, [status, folderId, current]);
   const path = current ? pathOf(nodes, current.id) : [];
   const items = childrenOf(nodes, folderId, exam);
   const results = useMemo(() => searchNodes(nodes, searched, exam), [nodes, searched, exam]);
@@ -559,6 +758,14 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
                     <Palette size={14} />
                   </button>
                 )}
+                <button
+                  className="icon-button"
+                  aria-label={`Transfer or copy ${node.name}`}
+                  title="Transfer or copy"
+                  onClick={() => setTransfer({ node })}
+                >
+                  <ArrowRightLeft size={14} />
+                </button>
                 <button className="icon-button" aria-label={`Rename ${node.name}`} onClick={() => rename(node)}>
                   <Pencil size={14} />
                 </button>
@@ -622,12 +829,38 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
             ))}
           </div>
           {admin && (
-            <button className="text-button" onClick={() => setEditingOptions((v) => !v)}>
-              <Settings2 size={15} /> Edit options
-            </button>
+            <span className="uni-select-admin">
+              <button className="text-button" onClick={() => setTransfer({ course: true })} disabled={status !== "ready"}>
+                <ArrowRightLeft size={15} /> Transfer this year
+              </button>
+              <button className="text-button" onClick={() => setEditingOptions((v) => !v)}>
+                <Settings2 size={15} /> Edit options
+              </button>
+            </span>
           )}
         </div>
       </section>
+
+      {admin && transfer && (
+        <TransferDialog
+          node={transfer.node || null}
+          nodes={nodes}
+          options={options}
+          from={choice}
+          notify={notify}
+          onClose={() => setTransfer(null)}
+          onDone={({ moved, copies, sameScope, reload: again }) => {
+            setTransfer(null);
+            if (again) return reload();
+            if (moved) {
+              const ids = new Set(moved.map((n) => n.id));
+              setNodes((all) => (sameScope ? all.map((n) => moved.find((m) => m.id === n.id) || n) : all.filter((n) => !ids.has(n.id))));
+              if (!sameScope && ids.has(folderId)) setFolderId(null);
+            }
+            if (copies && sameScope) setNodes((all) => [...all, ...copies]);
+          }}
+        />
+      )}
 
       {admin && editingOptions && (
         <OptionsEditor
