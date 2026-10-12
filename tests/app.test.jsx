@@ -92,6 +92,8 @@ vi.mock("../src/support", async (importOriginal) => ({
   exportMyData: vi.fn(async () => ({ documents: [{ id: "ai", name: "AI" }] })),
   signedInRecently: vi.fn(async () => true),
   deleteMyAccount: vi.fn(async (user, onStep) => onStep("Deleting 12 items…")),
+  loadBan: vi.fn(async () => null),
+  heartbeat: vi.fn(async () => {}),
 }));
 import * as support from "../src/support";
 const click = async (name) =>
@@ -121,6 +123,7 @@ beforeEach(() => {
     emailVerified: true,
   };
   authState.signOut = vi.fn(async () => {});
+  vi.mocked(support.loadBan).mockResolvedValue(null);
 });
 describe("login gate and demo page", () => {
   beforeEach(() => {
@@ -219,6 +222,7 @@ describe("signed in: navigation, account and library", () => {
     for (const [name, title] of [
       ["Library", "The library."],
       ["Study plan", "Make space to learn."],
+      ["University", "Your university library."],
       ["Interview", "Meet your next chapter."],
     ]) {
       await userEvent.click(dock().getByRole("button", { name, exact: true }));
@@ -1047,5 +1051,32 @@ describe("study plan across documents", () => {
     expect(
       screen.queryByRole("list", { name: "Study plan days" }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("blocked and suspended accounts", () => {
+  it("locks the app with the reason for a blocked user, who can only log out", async () => {
+    vi.mocked(support.loadBan).mockResolvedValue({ type: "blocked", until: null, reason: "Sharing exam answers" });
+    render(<App />);
+    const lock = await screen.findByRole("alertdialog", { name: "Your account is blocked." });
+    expect(lock).toHaveTextContent("Reason: Sharing exam answers");
+    expect(lock).toHaveTextContent("student@example.com");
+    // Nothing behind the lock screen can be used.
+    expect(document.querySelector("[inert]")).not.toBeNull();
+    // Their library is refused by the database: no "could not load" notice.
+    expect(screen.queryByText(/Could not load your library/)).toBeNull();
+    await userEvent.click(within(lock).getByRole("button", { name: /Log out/ }));
+    expect(authState.signOut).toHaveBeenCalled();
+  });
+  it("shows when a suspension ends, and ignores one that has already ended", async () => {
+    const until = new Date(Date.now() + 2 * 864e5);
+    vi.mocked(support.loadBan).mockResolvedValue({ type: "suspended", until, reason: "" });
+    const view = render(<App />);
+    const lock = await screen.findByRole("alertdialog", { name: "Your account is suspended." });
+    expect(lock).toHaveTextContent(/You can use StudyMind again on/);
+    view.unmount();
+    vi.mocked(support.loadBan).mockResolvedValue({ type: "suspended", until: new Date(Date.now() - 1000) });
+    await renderApp();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 });

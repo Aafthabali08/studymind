@@ -86,6 +86,43 @@ await check("student reads AI guidance", true, () => F.getDoc(F.doc(stu.db, "app
 await check("student writes AI guidance", false, () => F.setDoc(F.doc(stu.db, "app", "guidance"), { rules: ["hack"] }));
 await check("admin writes AI guidance", true, () => F.setDoc(F.doc(adm.db, "app", "guidance"), { rules: [] }));
 
+const scope = { university: "GITAM VIZAG", degree: "CSE CORE", year: "1" };
+const subj = F.doc(F.collection(adm.db, "uniNodes"));
+await check("student reads university options", true, () => F.getDoc(F.doc(stu.db, "uni", "options")));
+await check("student edits university options", false, () => F.setDoc(F.doc(stu.db, "uni", "options"), { universities: ["X"] }));
+await check("admin edits university options", true, () => F.setDoc(F.doc(adm.db, "uni", "options"), { universities: ["GITAM VIZAG"], degrees: ["CSE CORE"], years: ["1", "2", "3", "4"] }));
+await check("admin adds a subject", true, () => F.setDoc(subj, { ...scope, kind: "subject", name: "DBMS", parentId: null, exam: "both" }));
+await check("admin adds a node with a bad kind", false, () => F.setDoc(F.doc(F.collection(adm.db, "uniNodes")), { ...scope, kind: "virus", name: "x", exam: "both" }));
+await check("student adds a subject", false, () => F.setDoc(F.doc(F.collection(stu.db, "uniNodes")), { ...scope, kind: "subject", name: "Hack", parentId: null, exam: "both" }));
+await check("student lists subjects", true, () => F.getDocs(F.query(F.collection(stu.db, "uniNodes"), F.where("university", "==", scope.university), F.where("degree", "==", scope.degree), F.where("year", "==", scope.year))));
+await check("admin adds file text", true, () => F.setDoc(F.doc(adm.db, "uniNodes", subj.id, "parts", "0"), { index: 0, pages: ["text"] }));
+await check("student reads file text", true, () => F.getDocs(F.collection(stu.db, "uniNodes", subj.id, "parts")));
+await check("student writes file text", false, () => F.setDoc(F.doc(stu.db, "uniNodes", subj.id, "parts", "1"), { index: 1, pages: ["x"] }));
+await check("student renames a subject", false, () => F.updateDoc(F.doc(stu.db, "uniNodes", subj.id), { name: "Mine" }));
+await check("student deletes a subject", false, () => F.deleteDoc(F.doc(stu.db, "uniNodes", subj.id)));
+await check("student saves own notes on a shared file", true, () => F.setDoc(F.doc(stu.db, "users", stu.uid, "uniStudy", subj.id), { study: {} }));
+await check("other user reads student's notes on it", false, () => F.getDoc(F.doc(oth.db, "users", stu.uid, "uniStudy", subj.id)));
+await F.deleteDoc(F.doc(adm.db, "uniNodes", subj.id, "parts", "0"));
+await check("admin deletes a subject", true, () => F.deleteDoc(subj));
+
+// Blocks and suspensions (bans/{uid}): enforced for every read and write.
+await check("student blocks someone", false, () => F.setDoc(F.doc(stu.db, "bans", oth.uid), { type: "blocked", until: null }));
+await check("admin suspends without an end time", false, () => F.setDoc(F.doc(adm.db, "bans", oth.uid), { type: "suspended", until: null }));
+await check("admin suspends other user for an hour", true, () => F.setDoc(F.doc(adm.db, "bans", oth.uid), { type: "suspended", until: F.Timestamp.fromMillis(Date.now() + 3600_000), reason: "test" }));
+await check("suspended user reads own ban", true, () => F.getDoc(F.doc(oth.db, "bans", oth.uid)));
+await check("suspended user reads own documents", false, () => F.getDocs(F.collection(oth.db, "users", oth.uid, "documents")));
+await check("suspended user writes own profile", false, () => F.setDoc(F.doc(oth.db, "users", oth.uid), { name: "x" }, { merge: true }));
+await check("suspended user opens a ticket", false, () => F.setDoc(F.doc(F.collection(oth.db, "tickets")), { uid: oth.uid, status: "open" }));
+await check("suspended user reads the university library", false, () => F.getDoc(F.doc(oth.db, "uni", "options")));
+await check("admin ends suspension", true, () => F.setDoc(F.doc(adm.db, "bans", oth.uid), { type: "suspended", until: F.Timestamp.fromMillis(Date.now() - 1000) }));
+await check("expired suspension: user reads own documents", true, () => F.getDocs(F.collection(oth.db, "users", oth.uid, "documents")));
+await check("admin blocks other user", true, () => F.setDoc(F.doc(adm.db, "bans", oth.uid), { type: "blocked", until: null }));
+await check("blocked user reads own documents", false, () => F.getDocs(F.collection(oth.db, "users", oth.uid, "documents")));
+await check("blocked user deletes own ban", false, () => F.deleteDoc(F.doc(oth.db, "bans", oth.uid)));
+await check("admin reads a blocked user's profile", true, () => F.getDoc(F.doc(adm.db, "users", oth.uid)));
+await check("admin unblocks other user", true, () => F.deleteDoc(F.doc(adm.db, "bans", oth.uid)));
+await check("unblocked user reads own documents", true, () => F.getDocs(F.collection(oth.db, "users", oth.uid, "documents")));
+
 await check("student deletes own picture", true, () => F.deleteDoc(F.doc(stu.db, "tickets", t.id, "attachments", "a1")));
 await check("student deletes own feedback", true, () => F.deleteDoc(fb));
 await check("other user deletes student's ticket", false, () => F.deleteDoc(F.doc(oth.db, "tickets", t.id)));

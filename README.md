@@ -16,6 +16,8 @@ Visitors first see a **demo page**. Every feature (library, uploads, notes, ques
 - **Question bank**: 2, 5 and 8-mark questions with model answers and page references, generated after upload.
 - **Quiz**: 3 sets of 30 questions built only from your PDF, 5 of each format: multiple choice, fill in the blank, true/false, matching, name the term and "which statement is correct?". Score and per-format breakdown at the end, review of missed questions, **New questions** for fresh sets every time, and an optional **Gemini set** (checked against the document).
 - **Ask Gemini**: a floating help bot that reads the current screen, the open page (text and figures) or the whole document.
+- **University library**: pick university, degree and year (GITAM VIZAG · CSE CORE · Years 1–4 to start) and Regular / Supply. Browse subjects → folders (Unit 1, Unit 2, Important questions…) → files, search them, and open any file to study it: Ask document, notes, question bank, PDF/Word downloads and Ask Gemini on its pages. "Original" opens the uploaded PDF (files up to 15 MB). Each student's notes on a shared file are saved to their own account.
+- **Downloads**: notes, summaries, question banks (important / all, by category) and Interview Studio transcripts and reports as styled **PDF or Word** files.
 - **Study plan**: one plan across several PDFs, balanced by topic length over your days and hours, with revision days; optionally planned by Gemini.
 - **Saved in Firebase**: documents, pages, figures, notes, question banks, chats, plans, resume, interview sessions, theme and AI engine.
 
@@ -26,8 +28,10 @@ Everything runs on the free Firebase **Spark** plan and the free Gemini API tier
 ## Admin, support and feedback
 
 - **Admin dashboard** (only for `aafthabali08@gmail.com`, signed in with a verified email or Google): open it from the avatar menu.
-  - **Overview:** users, active this week, documents, open tickets, AI accuracy from feedback, feedback per feature.
-  - **Users:** search by email, number of documents, tickets, joined and last active dates.
+  - **Overview:** users, active now, active this week, blocked or suspended, documents, open tickets, AI accuracy from feedback, feedback per feature.
+  - **Users:** search by email; status (**Active now** = used the app in the last 5 minutes, Offline, Blocked, Suspended until …), documents, tickets, joined and last active. Filter by *Active now* or *Blocked & suspended*.
+  - **Block or suspend a user:** open the user → Access. **Suspend** for 1 hour, 1 day, 3 days, 1 week or 30 days (it ends by itself), or **Block** until you unblock them, with an optional reason the user sees. Enforced by the Firestore rules: a blocked or suspended account can't read or save any data, and the app shows them a locked screen. The admin account can't be blocked.
+  - **University library:** on the University page, add subjects, folders (one-tap Unit 1–5, Important questions, Previous papers, Notes, Lab) and upload PDF/TXT files into them; tag each as Regular, Supply or both; rename and delete (a folder with everything in it). **Edit options** adds or removes universities, degrees and years.
   - **Tickets:** read the complaint, reply, set the status (Open, In progress, Resolved, Closed). The user gets a 🔔 notification.
   - **Feedback:** everything users marked ✓ correct or ✗ wrong. One click turns it into an AI guidance rule.
   - **AI guidance:** rules added to every Gemini prompt for every user.
@@ -54,11 +58,11 @@ firebase deploy --only firestore:rules
 ```sh
 npm install
 npm run dev     # http://127.0.0.1:5173
-npm test        # 159 tests
+npm test        # 213 tests
 npm run build
 npm run preview # production build at http://127.0.0.1:4173
 npm run deploy  # tests + build + Firebase Hosting + Firestore rules
-npm run test:rules  # 36 security-rule checks on local emulators (needs Java)
+npm run test:rules  # 67 security-rule checks on local emulators (needs Java)
 ```
 
 ### Test everything locally (no real accounts)
@@ -105,6 +109,10 @@ Optional hosting: `npm run build && firebase deploy --only hosting`.
 | Extracted page text (split to stay under Firestore's 1 MB limit) | `users/{uid}/documents/{docId}/parts/{n}` |
 | Resume text                                                      | `users/{uid}/resumes/current`             |
 | Interview sessions                                               | `users/{uid}/interviews/{id}`             |
+| University options (universities, degrees, years)                | `uni/options`                             |
+| University subjects, folders and files (text, figures, original) | `uniNodes/{id}` and its sub-collections   |
+| Each user's notes on a university file                           | `users/{uid}/uniStudy/{id}`               |
+| Blocks and suspensions                                           | `bans/{uid}`                              |
 
 Firestore uses an offline cache, so your library opens instantly and works without a connection.
 

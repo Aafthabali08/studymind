@@ -10,10 +10,21 @@ import {
   Sparkles,
   Trash2,
   Users,
+  Ban,
+  Clock,
+  Unlock,
 } from "lucide-react";
 import {
+  ADMIN_EMAILS,
   FEEDBACK_KINDS,
+  SUSPEND_FOR,
   TICKET_STATUSES,
+  adminBans,
+  banState,
+  blockUser,
+  isActiveNow,
+  suspendUser,
+  unbanUser,
   adminFeedback,
   adminTickets,
   adminUsers,
@@ -79,18 +90,26 @@ export default function AdminPage({ active, notify }) {
       kind: "all",
       reviewed: "open",
     }),
-    [newRule, setNewRule] = useState("");
+    [newRule, setNewRule] = useState(""),
+    [bans, setBans] = useState({}), // uid → ban
+    [userFilter, setUserFilter] = useState("all"), // all | active | restricted
+    [banForm, setBanForm] = useState({ duration: SUSPEND_FOR[1][1], reason: "" }),
+    [banBusy, setBanBusy] = useState(false),
+    [now, setNow] = useState(Date.now());
   const searchTimer = useRef(null);
 
   async function load() {
     setLoading(true);
     try {
-      const [u, t, f, g] = await Promise.all([
+      const [u, t, f, g, b] = await Promise.all([
         adminUsers(),
         adminTickets(),
         adminFeedback(),
         loadGuidance(),
+        adminBans().catch(() => ({})),
       ]);
+      setBans(b);
+      setNow(Date.now());
       setUsers(u);
       setTickets(t);
       setFeedback(f);
@@ -107,6 +126,12 @@ export default function AdminPage({ active, notify }) {
   }
   useEffect(() => {
     if (active) load();
+  }, [active]);
+  // "Active now" and suspension times stay current while the page is open.
+  useEffect(() => {
+    if (!active) return;
+    const id = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(id);
   }, [active]);
 
   // Search users by email (prefix), debounced.
@@ -151,6 +176,8 @@ export default function AdminPage({ active, notify }) {
       wrong: feedback.length - correct,
       comments: feedback.filter((f) => f.comment).length,
       users: users.length,
+      activeNow: users.filter((u) => isActiveNow(u, now)).length,
+      restricted: Object.values(bans).filter((b) => banState(b, now)).length,
       activeWeek: users.filter(
         (u) => u.lastActive && u.lastActive.getTime() > weekAgo,
       ).length,
@@ -163,7 +190,7 @@ export default function AdminPage({ active, notify }) {
         : null,
       byKind,
     };
-  }, [users, tickets, feedback]);
+  }, [users, tickets, feedback, bans, now]);
 
   const ticketsFor = (uid) => tickets.filter((t) => t.uid === uid);
   const feedbackFor = (uid) => feedback.filter((f) => f.uid === uid);
@@ -296,7 +323,73 @@ export default function AdminPage({ active, notify }) {
     if (!f.reviewed) await toggleReviewed(f);
   }
 
-  const userRows = searchResults ?? users;
+  const statusOf = (u) => banState(bans[u.id], now);
+  const userRows = (searchResults ?? users).filter((u) =>
+    userFilter === "active"
+      ? isActiveNow(u, now)
+      : userFilter === "restricted"
+        ? statusOf(u)
+        : true,
+  );
+  const fmt = (d) =>
+    new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(d);
+  /** "Active now" · "Blocked" · "Suspended until …" */
+  function UserStatus({ u }) {
+    const ban = statusOf(u);
+    if (ban)
+      return (
+        <span className={`user-status ${ban.kind}`}>
+          {ban.kind === "blocked" ? "Blocked" : `Suspended until ${fmt(ban.until)}`}
+        </span>
+      );
+    return isActiveNow(u, now) ? (
+      <span className="user-status online">
+        <i aria-hidden="true" /> Active now
+      </span>
+    ) : (
+      <span className="user-status">Offline</span>
+    );
+  }
+  async function restrict(u, kind) {
+    const label = u.name || u.email;
+    const ok = window.confirm(
+      kind === "block"
+        ? `Block ${label}? They won't be able to use StudyMind until you unblock them.`
+        : `Suspend ${label} for ${SUSPEND_FOR.find(([, ms]) => ms === banForm.duration)?.[0]}?`,
+    );
+    if (!ok) return;
+    setBanBusy(true);
+    try {
+      const ban =
+        kind === "block"
+          ? await blockUser(u, banForm.reason)
+          : await suspendUser(u, banForm.duration, banForm.reason);
+      setBans((b) => ({ ...b, [u.id]: ban }));
+      setNow(Date.now());
+      setBanForm((f) => ({ ...f, reason: "" }));
+      notify(kind === "block" ? `${label} is blocked.` : `${label} is suspended until ${fmt(ban.until)}.`);
+    } catch (e) {
+      notify(e.message || "Could not change this user's access.");
+    } finally {
+      setBanBusy(false);
+    }
+  }
+  async function lift(u) {
+    setBanBusy(true);
+    try {
+      await unbanUser(u.id);
+      setBans((b) => {
+        const next = { ...b };
+        delete next[u.id];
+        return next;
+      });
+      notify(`${u.name || u.email} can use StudyMind again.`);
+    } catch (e) {
+      notify(e.message || "Could not lift the restriction.");
+    } finally {
+      setBanBusy(false);
+    }
+  }
 
   return (
     <div hidden={!active}>
@@ -352,8 +445,16 @@ export default function AdminPage({ active, notify }) {
                   <small>users</small>
                 </div>
                 <div>
+                  <strong>{stats.activeNow}</strong>
+                  <small>active now</small>
+                </div>
+                <div>
                   <strong>{stats.activeWeek}</strong>
                   <small>active this week</small>
+                </div>
+                <div>
+                  <strong>{stats.restricted}</strong>
+                  <small>blocked or suspended</small>
                 </div>
                 <div>
                   <strong>{stats.docs}</strong>
@@ -496,6 +597,24 @@ export default function AdminPage({ active, notify }) {
                   onChange={(e) => setSearch(e.target.value)}
                 />
               </label>
+              {!userDetail && (
+                <div className="segmented user-filter" role="group" aria-label="Show users">
+                  {[
+                    ["all", "All"],
+                    ["active", `Active now · ${stats.activeNow}`],
+                    ["restricted", `Blocked & suspended · ${stats.restricted}`],
+                  ].map(([v, l]) => (
+                    <button
+                      key={v}
+                      aria-pressed={userFilter === v}
+                      className={userFilter === v ? "active" : ""}
+                      onClick={() => setUserFilter(v)}
+                    >
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              )}
               {userDetail ? (
                 <div className="user-detail">
                   <button
@@ -505,7 +624,59 @@ export default function AdminPage({ active, notify }) {
                     ← All users
                   </button>
                   <h3>{userDetail.name || userDetail.email}</h3>
-                  <p className="fine">{userDetail.email}</p>
+                  <p className="fine">
+                    {userDetail.email} · <UserStatus u={userDetail} />
+                  </p>
+                  {ADMIN_EMAILS.includes(String(userDetail.email || "").toLowerCase()) ? (
+                    <p className="fine">This is the admin account; it can't be blocked or suspended.</p>
+                  ) : (
+                    <div className="access-card" aria-label="Access">
+                      <strong>Access</strong>
+                      {statusOf(userDetail) ? (
+                        <>
+                          <p className="fine">
+                            {statusOf(userDetail).kind === "blocked"
+                              ? "Blocked until you unblock them."
+                              : `Suspended until ${fmt(statusOf(userDetail).until)}; access returns by itself.`}
+                            {statusOf(userDetail).reason && ` Reason: ${statusOf(userDetail).reason}`}
+                          </p>
+                          <button className="secondary" disabled={banBusy} onClick={() => lift(userDetail)}>
+                            <Unlock size={15} />{" "}
+                            {statusOf(userDetail).kind === "blocked" ? "Unblock" : "End suspension"}
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <input
+                            aria-label="Reason (shown to the user)"
+                            placeholder="Reason (optional, shown to the user)"
+                            value={banForm.reason}
+                            maxLength={300}
+                            onChange={(e) => setBanForm((f) => ({ ...f, reason: e.target.value }))}
+                          />
+                          <div className="access-actions">
+                            <select
+                              aria-label="Suspend for"
+                              value={banForm.duration}
+                              onChange={(e) => setBanForm((f) => ({ ...f, duration: Number(e.target.value) }))}
+                            >
+                              {SUSPEND_FOR.map(([l, ms]) => (
+                                <option key={ms} value={ms}>
+                                  {l}
+                                </option>
+                              ))}
+                            </select>
+                            <button className="secondary" disabled={banBusy} onClick={() => restrict(userDetail, "suspend")}>
+                              <Clock size={15} /> Suspend
+                            </button>
+                            <button className="secondary danger-button" disabled={banBusy} onClick={() => restrict(userDetail, "block")}>
+                              <Ban size={15} /> Block
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
                   <div className="admin-stats">
                     <div>
                       <strong>{userDetail.docCount || 0}</strong>
@@ -566,6 +737,7 @@ export default function AdminPage({ active, notify }) {
                     <thead>
                       <tr>
                         <th>User</th>
+                        <th>Status</th>
                         <th>Documents</th>
                         <th>Tickets</th>
                         <th>Joined</th>
@@ -587,6 +759,9 @@ export default function AdminPage({ active, notify }) {
                               <strong>{u.name || "—"}</strong>
                               <small>{u.email}</small>
                             </button>
+                          </td>
+                          <td>
+                            <UserStatus u={u} />
                           </td>
                           <td>{u.docCount || 0}</td>
                           <td>{ticketsFor(u.id).length}</td>

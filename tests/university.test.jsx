@@ -1,0 +1,198 @@
+import React from "react";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  childrenOf,
+  descendants,
+  editOptions,
+  examFits,
+  pathOf,
+  searchNodes,
+  visible,
+} from "../src/university";
+
+const scope = { university: "GITAM VIZAG", degree: "CSE CORE", year: "2" };
+const NODES = [
+  { id: "s1", kind: "subject", name: "DBMS", parentId: null, exam: "both" },
+  { id: "s2", kind: "subject", name: "Operating Systems", parentId: null, exam: "both" },
+  { id: "f10", kind: "folder", name: "Unit 10", parentId: "s1", exam: "both" },
+  { id: "f2", kind: "folder", name: "Unit 2", parentId: "s1", exam: "both" },
+  { id: "fi", kind: "folder", name: "Important questions", parentId: "s1", exam: "supply" },
+  { id: "x1", kind: "file", name: "Normalization notes", parentId: "f2", exam: "both", pageCount: 12, imageCount: 2, hasOriginal: true, fileName: "Normalization notes.pdf" },
+  { id: "x2", kind: "file", name: "Supply 2024 paper", parentId: "fi", exam: "supply", pageCount: 3 },
+  { id: "x3", kind: "file", name: "SQL basics", parentId: "s1", exam: "regular", pageCount: 5 },
+].map((n) => ({ ...n, ...scope }));
+
+describe("library helpers", () => {
+  it("lists folders before files, numerically, filtered by exam", () => {
+    expect(childrenOf(NODES, null).map((n) => n.name)).toEqual(["DBMS", "Operating Systems"]);
+    expect(childrenOf(NODES, "s1").map((n) => n.name)).toEqual([
+      "Important questions",
+      "Unit 2",
+      "Unit 10",
+      "SQL basics",
+    ]);
+    expect(childrenOf(NODES, "s1", "regular").map((n) => n.name)).toEqual(["Unit 2", "Unit 10", "SQL basics"]);
+    expect(childrenOf(NODES, "s1", "supply").map((n) => n.name)).toEqual(["Important questions", "Unit 2", "Unit 10"]);
+    expect(examFits({ exam: "both" }, "supply")).toBe(true);
+    // A file inside a supply-only folder is hidden for regular students.
+    expect(visible(NODES, NODES.find((n) => n.id === "x2"), "regular")).toBe(false);
+  });
+
+  it("finds paths, everything inside a node, and searches names with their folders", () => {
+    expect(pathOf(NODES, "x1").map((n) => n.name)).toEqual(["DBMS", "Unit 2", "Normalization notes"]);
+    expect(descendants(NODES, "s1").map((n) => n.id).sort()).toEqual(["f10", "f2", "fi", "s1", "x1", "x2", "x3"]);
+    expect(searchNodes(NODES, "dbms unit 2").map((r) => r.node.name)).toEqual(["Unit 2", "Normalization notes"]);
+    expect(searchNodes(NODES, "paper").map((r) => r.node.name)).toEqual(["Supply 2024 paper"]);
+    expect(searchNodes(NODES, "paper", "regular")).toEqual([]);
+    expect(searchNodes(NODES, "  ")).toEqual([]);
+  });
+
+  it("edits the admin's option lists without repeats", () => {
+    const o = { universities: ["GITAM VIZAG"], degrees: ["CSE CORE"], years: ["1", "2", "3", "4"] };
+    expect(editOptions(o, "universities", { add: " gitam vizag " }).universities).toEqual(["GITAM VIZAG"]);
+    expect(editOptions(o, "universities", { add: "GITAM Hyderabad" }).universities).toEqual(["GITAM VIZAG", "GITAM Hyderabad"]);
+    expect(editOptions(o, "years", { add: "10" }).years).toEqual(["1", "2", "3", "4", "10"]);
+    expect(editOptions(o, "degrees", { remove: "CSE CORE" }).degrees).toEqual([]);
+  });
+});
+
+// ---- The page -------------------------------------------------------------------
+const api = vi.hoisted(() => ({
+  loadUniOptions: vi.fn(),
+  saveUniOptions: vi.fn(),
+  loadNodes: vi.fn(),
+  createNode: vi.fn(),
+  updateNode: vi.fn(),
+  deleteNodes: vi.fn(),
+  saveUniFile: vi.fn(),
+  loadOriginal: vi.fn(),
+}));
+vi.mock("../src/university", async (orig) => ({ ...(await orig()), ...api }));
+vi.mock("../src/documents", () => ({
+  readDocument: vi.fn(async () => ({ pages: ["Unit 1 text", "More"], images: [] })),
+  warmUpReader: vi.fn(),
+  downloadBlob: vi.fn(),
+}));
+const { default: UniversityPage } = await import("../src/UniversityPage");
+
+beforeEach(() => {
+  localStorage.clear();
+  Object.values(api).forEach((f) => f.mockReset());
+  api.loadUniOptions.mockResolvedValue({
+    universities: ["GITAM VIZAG"],
+    degrees: ["CSE CORE"],
+    years: ["1", "2", "3", "4"],
+  });
+  api.loadNodes.mockResolvedValue(NODES);
+});
+afterEach(() => vi.restoreAllMocks());
+
+const renderPage = (props = {}) => {
+  const onOpenFile = vi.fn(async () => {});
+  const notify = vi.fn();
+  render(<UniversityPage active admin={false} notify={notify} onOpenFile={onOpenFile} {...props} />);
+  return { onOpenFile, notify };
+};
+
+it("lets a student pick their course, browse folders, filter by exam, search and open a file", async () => {
+  const { onOpenFile } = renderPage();
+  expect(screen.getByLabelText("University")).toHaveValue("GITAM VIZAG");
+  expect(screen.getByLabelText("Degree")).toHaveValue("CSE CORE");
+  await userEvent.selectOptions(screen.getByLabelText("Year"), "2");
+  expect(api.loadNodes).toHaveBeenLastCalledWith({ university: "GITAM VIZAG", degree: "CSE CORE", year: "2" });
+  expect(await screen.findByRole("button", { name: "Open DBMS" })).toBeVisible();
+  // No admin tools for students.
+  expect(screen.queryByRole("button", { name: /Add subject/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Edit options/ })).toBeNull();
+
+  await userEvent.click(screen.getByRole("button", { name: "Open DBMS" }));
+  expect(screen.getByRole("heading", { name: "DBMS" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Open Important questions" })).toBeVisible();
+  // Regular students don't see supply-only material.
+  await userEvent.click(screen.getByRole("button", { name: "Regular" }));
+  expect(screen.queryByRole("button", { name: "Open Important questions" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Open SQL basics" })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "All" }));
+
+  await userEvent.click(screen.getByRole("button", { name: "Open Unit 2" }));
+  expect(within(screen.getByRole("navigation", { name: "Folder path" })).getByText("DBMS")).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Open Normalization notes" }));
+  expect(onOpenFile).toHaveBeenCalledWith(
+    expect.objectContaining({ id: "x1" }),
+    [expect.objectContaining({ name: "DBMS" }), expect.objectContaining({ name: "Unit 2" }), expect.objectContaining({ name: "Normalization notes" })],
+  );
+  expect(screen.getByRole("button", { name: "Open original Normalization notes" })).toBeVisible();
+
+  await userEvent.type(screen.getByLabelText("Search subjects, folders and files"), "paper");
+  await userEvent.click(screen.getByRole("button", { name: "Search" }));
+  expect(screen.getByRole("heading", { name: "1 result for “paper”" })).toBeVisible();
+  expect(screen.getByText("DBMS › Important questions")).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Clear search" }));
+  expect(screen.queryByText(/result for/)).toBeNull();
+  // The choice is remembered for next time.
+  expect(JSON.parse(localStorage.getItem("studymind-university"))).toMatchObject({ year: "2", exam: "all" });
+});
+
+it("lets the admin add subjects and folders, upload files, rename, delete and edit the options", async () => {
+  api.loadNodes.mockResolvedValue([]);
+  api.createNode.mockImplementation(async ({ parentId, kind, name, exam }) => ({
+    id: `n-${name}`,
+    parentId,
+    kind,
+    name,
+    exam,
+    ...scope,
+  }));
+  api.saveUniFile.mockImplementation(async ({ parentId, file, pages }) => ({
+    id: "file-1",
+    kind: "file",
+    name: file.name.replace(/\.pdf$/, ""),
+    parentId,
+    exam: "both",
+    pageCount: pages.length,
+    hasOriginal: true,
+  }));
+  api.saveUniOptions.mockResolvedValue();
+  api.deleteNodes.mockImplementation(async (nodes, id) => [id]);
+  const { notify } = renderPage({ admin: true });
+  expect(await screen.findByText(/No subjects yet for this course/)).toBeVisible();
+
+  await userEvent.type(screen.getByLabelText("New subject name"), "DBMS");
+  await userEvent.selectOptions(screen.getByLabelText("Exam for new items"), "regular");
+  await userEvent.click(screen.getByRole("button", { name: /Add subject/ }));
+  expect(api.createNode).toHaveBeenCalledWith(
+    expect.objectContaining({ kind: "subject", name: "DBMS", parentId: null, exam: "regular", scope: expect.objectContaining({ university: "GITAM VIZAG" }) }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Open DBMS" }));
+  await userEvent.click(screen.getByRole("button", { name: /Unit 1/ }));
+  expect(api.createNode).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "folder", name: "Unit 1", parentId: "n-DBMS" }));
+  await userEvent.click(screen.getByRole("button", { name: "Open Unit 1" }));
+
+  await userEvent.upload(
+    screen.getByLabelText("Choose files to upload"),
+    new File(["%PDF"], "Unit 1 notes.pdf", { type: "application/pdf" }),
+  );
+  expect(await screen.findByRole("button", { name: "Open Unit 1 notes" })).toBeVisible();
+  expect(api.saveUniFile).toHaveBeenCalledWith(expect.objectContaining({ parentId: "n-Unit 1", pages: ["Unit 1 text", "More"] }));
+  expect(screen.getAllByText("2 pages").length).toBeGreaterThan(0); // card and upload status
+
+  vi.spyOn(window, "prompt").mockReturnValue("Unit 1 – notes");
+  await userEvent.click(screen.getByRole("button", { name: "Rename Unit 1 notes" }));
+  expect(api.updateNode).toHaveBeenCalledWith("file-1", { name: "Unit 1 – notes" });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  await userEvent.click(screen.getByRole("button", { name: "Delete Unit 1 – notes" }));
+  expect(api.deleteNodes).toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: "Open Unit 1 – notes" })).toBeNull();
+
+  await userEvent.click(screen.getByRole("button", { name: /Edit options/ }));
+  await userEvent.type(screen.getByLabelText("Add to Universities"), "GITAM Hyderabad");
+  await userEvent.click(within(screen.getByRole("region", { name: "University options" })).getAllByRole("button", { name: /Add/ })[0]);
+  await userEvent.click(screen.getByRole("button", { name: "Save options" }));
+  expect(api.saveUniOptions).toHaveBeenCalledWith(
+    expect.objectContaining({ universities: ["GITAM VIZAG", "GITAM Hyderabad"], degrees: ["CSE CORE"] }),
+  );
+  expect(notify).toHaveBeenCalledWith(expect.stringMatching(/Options saved/));
+  expect(screen.getByRole("option", { name: "GITAM Hyderabad" })).toBeInTheDocument();
+});

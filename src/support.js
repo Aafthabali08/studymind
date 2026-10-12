@@ -9,6 +9,7 @@
 //   tickets/{id}                     complaint box: status + message thread
 //   tickets/{id}/attachments/{id}    optional pictures (compressed, ≤ ~450 KB)
 //   app/guidance                     admin rules added to every Gemini prompt
+//   bans/{uid}                       admin block / timed suspension of a user
 import { firebase } from "./firebase";
 
 export const ADMIN_EMAILS = ["aafthabali08@gmail.com"];
@@ -89,6 +90,82 @@ export async function changeDocCount(uid, delta) {
     { docCount: f.increment(delta) },
     { merge: true },
   );
+}
+
+/** Keeps "last active" fresh while the app is open (for "Active now"). */
+export async function heartbeat(uid) {
+  const { db, f } = await fs();
+  await f.setDoc(f.doc(db, "users", uid), { lastActive: f.serverTimestamp() }, { merge: true });
+}
+/** Seen in the last 5 minutes (the app sends a heartbeat every 4). */
+export const ACTIVE_MS = 5 * 60 * 1000;
+export const HEARTBEAT_MS = 4 * 60 * 1000;
+export const isActiveNow = (user, now = Date.now()) =>
+  Boolean(user?.lastActive) && now - new Date(user.lastActive).getTime() < ACTIVE_MS;
+
+// ---- Blocking and suspending (admin) -------------------------------------------------
+// A ban is enforced by firestore.rules: a blocked or suspended user can no
+// longer read or write any data. The app also shows them a locked screen.
+export const SUSPEND_FOR = [
+  ["1 hour", 60 * 60 * 1000],
+  ["1 day", 24 * 60 * 60 * 1000],
+  ["3 days", 3 * 24 * 60 * 60 * 1000],
+  ["1 week", 7 * 24 * 60 * 60 * 1000],
+  ["30 days", 30 * 24 * 60 * 60 * 1000],
+];
+/** { kind: "blocked" | "suspended", until, reason } while a ban is in force, else null. */
+export function banState(ban, now = Date.now()) {
+  if (!ban) return null;
+  const until = toDate(ban.until);
+  if (ban.type === "suspended" && (!until || until.getTime() <= now)) return null;
+  return {
+    kind: ban.type === "suspended" ? "suspended" : "blocked",
+    until: ban.type === "suspended" ? until : null,
+    reason: ban.reason || "",
+  };
+}
+/** The signed-in user's own ban (null when none). */
+export async function loadBan(uid) {
+  const { db, f } = await fs();
+  const snap = await f.getDoc(f.doc(db, "bans", uid));
+  return snap.exists() ? snap.data() : null;
+}
+/** Every ban, by uid (admin). */
+export async function adminBans() {
+  const { db, f } = await fs();
+  const snap = await f.getDocs(f.collection(db, "bans"));
+  return Object.fromEntries(snap.docs.map((d) => [d.id, { ...d.data(), until: toDate(d.data().until) }]));
+}
+function assertNotAdmin(user) {
+  if (ADMIN_EMAILS.includes(String(user.email || "").toLowerCase()))
+    throw new Error("The admin account can't be blocked or suspended.");
+}
+/** Blocks a user until the admin lifts it. */
+export async function blockUser(user, reason = "") {
+  assertNotAdmin(user);
+  const { db, f } = await fs();
+  const ban = { uid: user.id, email: user.email || "", type: "blocked", until: null, reason: clip(reason, 300) };
+  await f.setDoc(f.doc(db, "bans", user.id), { ...ban, at: f.serverTimestamp() });
+  return ban;
+}
+/** Suspends a user for `ms` milliseconds; access returns by itself after. */
+export async function suspendUser(user, ms, reason = "", now = Date.now()) {
+  assertNotAdmin(user);
+  if (!(ms > 0)) throw new Error("Choose how long to suspend for.");
+  const { db, f } = await fs();
+  const until = new Date(now + ms);
+  const ban = { uid: user.id, email: user.email || "", type: "suspended", until, reason: clip(reason, 300) };
+  await f.setDoc(f.doc(db, "bans", user.id), {
+    ...ban,
+    until: f.Timestamp.fromDate(until),
+    at: f.serverTimestamp(),
+  });
+  return ban;
+}
+/** Lifts a block or suspension. */
+export async function unbanUser(uid) {
+  const { db, f } = await fs();
+  await f.deleteDoc(f.doc(db, "bans", uid));
 }
 
 // ---- Feedback & learning -------------------------------------------------------

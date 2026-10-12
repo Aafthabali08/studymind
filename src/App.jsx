@@ -40,6 +40,10 @@ import {
   changeDocCount,
   deleteMyAccount,
   ensureProfile,
+  heartbeat,
+  loadBan,
+  banState,
+  HEARTBEAT_MS,
   exportMyData,
   signedInRecently,
   isAdminUser,
@@ -77,6 +81,7 @@ const pages = {
   AuthPanel: () => import("./AuthPanel"),
   AISettings: () => import("./AISettings"),
   HelpBot: () => import("./HelpBot"),
+  UniversityPage: () => import("./UniversityPage"),
 };
 const DocumentWorkspace = lazy(pages.DocumentWorkspace);
 const InterviewStudio = lazy(pages.InterviewStudio);
@@ -86,6 +91,7 @@ const AdminPage = lazy(pages.AdminPage);
 const AuthPanel = lazy(pages.AuthPanel);
 const AISettings = lazy(pages.AISettings);
 const HelpBot = lazy(pages.HelpBot);
+const UniversityPage = lazy(pages.UniversityPage);
 function preloadPages() {
   const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 600));
   idle(() => {
@@ -106,6 +112,7 @@ const PageLoading = () => (
 const NAV = [
   [LayoutGrid, "Overview", "Workspace"],
   [BookOpen, "Library", "My library"],
+  [GraduationCap, "University", "University"],
   [CalendarDays, "Study plan", "Study plan"],
   [Mic, "Interview", "Interview studio"],
 ];
@@ -130,7 +137,10 @@ export default function App() {
     [notifications, setNotifications] = useState([]),
     [openTicketId, setOpenTicketId] = useState(null),
     [deleting, setDeleting] = useState({ typed: "", step: "", error: "" }),
-    [docToDelete, setDocToDelete] = useState(null);
+    [docToDelete, setDocToDelete] = useState(null),
+    // Set by the admin (bans/{uid}): { kind: "blocked" | "suspended", until, reason }.
+    [ban, setBan] = useState(null);
+  const banCheck = useRef(Promise.resolve(null));
   const admin = isAdminUser(user);
   const unread = notifications.filter((n) => !n.read).length;
   const fileRef = useRef(null),
@@ -167,6 +177,15 @@ export default function App() {
     if (!user) return;
     setPopover(null);
     let live = true;
+    // Blocked or suspended accounts are refused by the database too
+    // (firestore.rules); this shows them why.
+    banCheck.current = loadBan(user.uid)
+      .then((b) => {
+        const state = banState(b);
+        if (live) setBan(state);
+        return state;
+      })
+      .catch(() => null);
     setLoadingLibrary(true);
     loadLibrary(user.uid)
       .then((cloudDocs) => {
@@ -178,11 +197,10 @@ export default function App() {
           Object.fromEntries(cloudDocs.map((d) => [d.id, d.study || {}])),
         );
       })
-      .catch(
-        () =>
-          live &&
-          setNotice("Could not load your library. Check your connection."),
-      )
+      .catch(async () => {
+        if (!live || (await banCheck.current)) return;
+        setNotice("Could not load your library. Check your connection.");
+      })
       .finally(() => live && setLoadingLibrary(false));
     ensureProfile(user).catch(() => {});
     preloadPages();
@@ -214,6 +232,36 @@ export default function App() {
       live = false;
     };
   }, [user?.uid]);
+  // "Active now" for the admin, and a block or suspension applied (or ended)
+  // while the app is open: refreshed every few minutes while it is visible.
+  useEffect(() => {
+    if (!user) return setBan(null);
+    const tick = () => {
+      if (document.visibilityState === "hidden") return;
+      heartbeat(user.uid).catch(() => {});
+      loadBan(user.uid)
+        .then((b) => setBan(banState(b)))
+        .catch(() => {});
+    };
+    const id = setInterval(tick, HEARTBEAT_MS);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [user?.uid]);
+  // A suspension ends by itself: unlock at that moment.
+  useEffect(() => {
+    if (!ban?.until) return;
+    const ms = ban.until.getTime() - Date.now();
+    // Long suspensions outlast one timer: check again when it fires.
+    const id = setTimeout(
+      () => setBan((b) => (b?.until && b.until.getTime() <= Date.now() ? null : b && { ...b })),
+      Math.min(Math.max(ms, 0), 2 ** 31 - 1),
+    );
+    return () => clearTimeout(id);
+  }, [ban]);
+
   // Admin replies arrive as notifications; check every 2 minutes and on focus.
   function refreshNotifications() {
     if (!user) return;
@@ -372,6 +420,36 @@ export default function App() {
       loadImages(user.uid, doc.cloudId)
         .then((images) => patchDoc(doc.id, { images }))
         .catch(() => patchDoc(doc.id, { images: [] }));
+  }
+  /** A shared university file opens in the normal document view (read-only:
+   * no rename or delete); each user's notes on it are saved to their account. */
+  async function openUniFile(node, path) {
+    if (!user) return requireLogin();
+    const { loadUniFile, loadUniStudy } = await import("./university");
+    const [content, saved] = await Promise.all([
+      loadUniFile(node.id),
+      loadUniStudy(user.uid, node.id).catch(() => ({})),
+    ]);
+    const doc = {
+      id: `uni-${node.id}`,
+      uniId: node.id,
+      name: node.name,
+      file: node.fileName,
+      pages: content.pages,
+      images: content.images,
+      category: path
+        .slice(0, -1)
+        .map((n) => n.name)
+        .join(" › "),
+      kind: "University file",
+    };
+    setStudy((all) => ({ ...all, [doc.id]: { ...saved, ...all[doc.id] } }));
+    window.scrollTo({ top: 0, behavior: "instant" });
+    window.speechSynthesis?.cancel();
+    setSelected(doc);
+    setInitialTab("Ask document");
+    setView("University");
+    setBotPage(0);
   }
   function openUpload() {
     if (!user) return requireLogin();
@@ -538,11 +616,16 @@ export default function App() {
   function updateStudy(doc, patch) {
     setStudy((all) => {
       const next = { ...all, [doc.id]: { ...all[doc.id], ...patch } };
-      if (user && doc.cloudId) {
+      if (user && (doc.cloudId || doc.uniId)) {
         clearTimeout(noteTimers.current[doc.id]);
         noteTimers.current[doc.id] = setTimeout(
           () =>
-            saveStudy(user.uid, doc.cloudId, next[doc.id]).catch(() =>
+            (doc.uniId
+              ? import("./university").then((u) =>
+                  u.saveUniStudy(user.uid, doc.uniId, next[doc.id]),
+                )
+              : saveStudy(user.uid, doc.cloudId, next[doc.id])
+            ).catch(() =>
               setNotice(
                 "Notes could not be synced. They are kept in this session.",
               ),
@@ -660,7 +743,7 @@ export default function App() {
   return (
     <>
       <Particles theme={theme} />
-      <div inert={modal ? true : undefined}>
+      <div inert={modal || (user && ban) ? true : undefined}>
         <header className="topbar">
           <button
             className="brand"
@@ -1173,8 +1256,8 @@ export default function App() {
                 initialTab={initialTab}
                 study={study[selected.id] || {}}
                 onStudy={(patch) => updateStudy(selected, patch)}
-                onDelete={removeDoc}
-                onRename={renameDoc}
+                onDelete={selected.uniId ? undefined : removeDoc}
+                onRename={selected.uniId ? undefined : renameDoc}
                 onOpenSettings={() => setModal("ai")}
                 onPageChange={setBotPage}
                 onBack={() => {
@@ -1221,6 +1304,18 @@ export default function App() {
                   notify={setNotice}
                   openTicketId={openTicketId}
                   onOpened={() => setOpenTicketId(null)}
+                />
+              </Suspense>
+              <Suspense
+                fallback={
+                  !selected && view === "University" ? <PageLoading /> : null
+                }
+              >
+                <UniversityPage
+                  active={!selected && view === "University"}
+                  admin={admin}
+                  notify={setNotice}
+                  onOpenFile={openUniFile}
                 />
               </Suspense>
               {admin && (
@@ -1278,6 +1373,33 @@ export default function App() {
           </Suspense>
         )}
       </div>
+      {user && ban && (
+        <div className="ban-screen" role="alertdialog" aria-modal="true" aria-labelledby="ban-title">
+          <section className="panel ban-card">
+            <span className="eyebrow">STUDYMIND</span>
+            <h1 id="ban-title">
+              {ban.kind === "blocked" ? "Your account is blocked." : "Your account is suspended."}
+            </h1>
+            <p>
+              {ban.kind === "blocked"
+                ? "The StudyMind admin has blocked this account, so it can't be used."
+                : `You can use StudyMind again on ${new Intl.DateTimeFormat("en", {
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                  }).format(ban.until)}.`}
+            </p>
+            {ban.reason && (
+              <p className="ban-reason">
+                <strong>Reason:</strong> {ban.reason}
+              </p>
+            )}
+            <p className="fine">Signed in as {user.email}. If you think this is a mistake, contact the admin.</p>
+            <button className="primary" onClick={logOut}>
+              <LogOut size={16} /> Log out
+            </button>
+          </section>
+        </div>
+      )}
       <input
         ref={fileRef}
         type="file"

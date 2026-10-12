@@ -11,8 +11,18 @@ service cloud.firestore {
         && request.auth.token.email == "aafthabali08@gmail.com"
         && request.auth.token.email_verified == true;
     }
+    // Blocked (no end) or suspended until a time, by the admin (bans/{uid}).
+    function banned() {
+      let ban = /databases/$(database)/documents/bans/$(request.auth.uid);
+      return exists(ban)
+        && (get(ban).data.until == null || get(ban).data.until > request.time);
+    }
+    // A signed-in user who is not blocked or suspended.
+    function allowed() {
+      return signedIn() && !banned();
+    }
     function isOwner(uid) {
-      return signedIn() && request.auth.uid == uid;
+      return allowed() && request.auth.uid == uid;
     }
     function onlyChanges(keys) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
@@ -20,6 +30,15 @@ service cloud.firestore {
 
     // Profile: the owner writes it; the admin can read and search profiles
     // (email, name, number of documents) but never document contents.
+    // Blocks and suspensions: the admin sets them; a user can see their own.
+    match /bans/{uid} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow write: if isAdmin()
+        && request.resource.data.type in ["blocked", "suspended"]
+        && (request.resource.data.type == "blocked" || request.resource.data.until is timestamp);
+      allow delete: if isAdmin();
+    }
+
     match /users/{uid} {
       allow read: if isOwner(uid) || isAdmin();
       allow write: if isOwner(uid);
@@ -41,12 +60,12 @@ service cloud.firestore {
     // Complaint box. Users create and read their own tickets and can add
     // messages; only the admin changes the status.
     match /tickets/{id} {
-      allow create: if signedIn()
+      allow create: if allowed()
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.status == "open";
-      allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow read: if isAdmin() || (allowed() && resource.data.uid == request.auth.uid);
       allow update: if isAdmin()
-        || (signedIn() && resource.data.uid == request.auth.uid
+        || (allowed() && resource.data.uid == request.auth.uid
             && onlyChanges(["messages", "updatedAt", "unreadForAdmin", "unreadForUser"]));
       // The admin, or the owner when deleting their account.
       allow delete: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
@@ -54,7 +73,7 @@ service cloud.firestore {
       // Optional pictures on a ticket (compressed in the browser, < 700 KB).
       match /attachments/{attachment} {
         function ticketOwner() {
-          return signedIn()
+          return allowed()
             && get(/databases/$(database)/documents/tickets/$(id)).data.uid == request.auth.uid;
         }
         allow read: if isAdmin() || ticketOwner();
@@ -68,16 +87,41 @@ service cloud.firestore {
 
     // ✓ / ✗ feedback on AI output. Users add their own; the admin reviews.
     match /feedback/{id} {
-      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
-      allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow create: if allowed() && request.resource.data.uid == request.auth.uid;
+      allow read: if isAdmin() || (allowed() && resource.data.uid == request.auth.uid);
       allow update: if isAdmin();
       allow delete: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
     }
 
     // Admin guidance added to every Gemini prompt; readable by all users.
     match /app/{doc} {
-      allow read: if signedIn();
+      allow read: if allowed();
       allow write: if isAdmin();
+    }
+
+    // University library: the admin's university / degree / year options and
+    // the shared subjects, folders and files (with their text, figures and
+    // original). Every signed-in user can read; only the admin can change.
+    // Each user's own notes for a file live under users/{uid}/uniStudy.
+    match /uni/{doc} {
+      allow read: if allowed();
+      allow write: if isAdmin();
+    }
+    match /uniNodes/{id} {
+      allow read: if allowed();
+      allow write: if isAdmin()
+        && request.resource.data.kind in ["subject", "folder", "file"]
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 120
+        && request.resource.data.exam in ["both", "regular", "supply"];
+      allow delete: if isAdmin();
+      // A file's parts, images and original chunks (one level below the
+      // node; "{sub=**}" would also match the node itself and skip its checks).
+      match /{collection}/{part} {
+        allow read: if allowed();
+        allow write: if isAdmin();
+      }
     }
   }
 }

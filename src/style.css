@@ -5481,3 +5481,379 @@ button.local-label {
     grid-row: 1;
   }
 }
+
+/* ---- University library ---- */
+.uni-select,
+.uni-browser,
+.uni-options {
+  margin-bottom: 16px;
+  padding: 24px 28px;
+}
+.uni-select-fields {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 0.7fr;
+  gap: 12px;
+}
+.uni-select label,
+.uni-options label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 550;
+  min-width: 0;
+}
+.uni-select select {
+  width: 100%;
+}
+.uni-select-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+.uni-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 16px;
+  padding: 8px 8px 8px 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+}
+.uni-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 8px 0;
+  color: var(--text);
+}
+.uni-search input:focus {
+  outline: none;
+}
+.uni-search:focus-within {
+  border-color: var(--text);
+}
+.uni-search .primary {
+  border-radius: 999px;
+  padding-inline: 18px;
+}
+.uni-head h2 {
+  margin: 6px 0 14px;
+}
+.uni-crumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.uni-crumbs button {
+  border: 0;
+  background: none;
+  padding: 2px 4px;
+  color: var(--muted);
+  border-radius: 6px;
+}
+.uni-crumbs button[aria-current="page"] {
+  color: var(--text);
+  font-weight: 600;
+}
+.uni-crumbs button:hover {
+  color: var(--text);
+  background: var(--soft);
+}
+.uni-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+}
+.uni-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--solid);
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+.uni-card:hover {
+  border-color: var(--muted);
+}
+.uni-card-open {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: var(--text);
+}
+.uni-card-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  background: var(--soft);
+}
+.uni-card.subject .uni-card-icon {
+  background: color-mix(in srgb, var(--band-blue) 16%, transparent);
+  color: var(--band-blue);
+}
+.uni-card.folder .uni-card-icon {
+  background: color-mix(in srgb, var(--band-yellow) 18%, transparent);
+  color: color-mix(in srgb, var(--band-yellow) 70%, var(--text));
+}
+.uni-card-text {
+  flex: 1;
+  min-width: 0;
+}
+.uni-card-text strong,
+.uni-card-text small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.uni-card-text small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.uni-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--line);
+  background: var(--soft);
+}
+.uni-card-actions select {
+  margin-left: auto;
+  padding: 4px 8px;
+  font-size: 12px;
+  width: auto;
+}
+.uni-card-actions .text-button {
+  font-size: 13px;
+}
+.exam-badge {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--line);
+}
+.exam-regular {
+  color: var(--band-blue);
+}
+.exam-supply {
+  color: var(--band-red);
+}
+.uni-admin {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+}
+.uni-admin-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.uni-admin-row input {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.uni-admin-row select {
+  width: auto;
+}
+.uni-uploads {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+.uni-uploads li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--soft);
+}
+.uni-uploads li small {
+  color: var(--muted);
+  text-align: right;
+}
+.uni-uploads li.error small {
+  color: var(--band-red);
+}
+.uni-uploads li.done small {
+  color: var(--band-blue);
+}
+.uni-empty {
+  color: var(--muted);
+  padding: 18px 0;
+}
+.uni-options-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.uni-options-head h3 {
+  margin: 4px 0 10px;
+}
+.uni-option-group {
+  margin-bottom: 14px;
+}
+.uni-option-group > strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+.chip.removable {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.chip.removable button {
+  border: 0;
+  background: none;
+  padding: 0;
+  display: grid;
+  color: var(--muted);
+}
+.uni-option-add {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.uni-option-add input {
+  flex: 1;
+  min-width: 0;
+}
+@media (max-width: 640px) {
+  .uni-select,
+  .uni-browser,
+  .uni-options {
+    padding: 18px;
+  }
+  .uni-select-fields {
+    grid-template-columns: 1fr 1fr;
+  }
+  .uni-select-fields label:first-child {
+    grid-column: 1 / -1;
+  }
+  .uni-grid {
+    grid-template-columns: 1fr;
+  }
+  .uni-search {
+    padding-left: 12px;
+  }
+  .uni-search .primary {
+    padding-inline: 14px;
+  }
+}
+
+/* ---- Blocked / suspended account ---- */
+.ban-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: #000000a6;
+  backdrop-filter: blur(14px);
+}
+.ban-card {
+  width: min(480px, 100%);
+  padding: 32px;
+  text-align: left;
+}
+.ban-card h1 {
+  font-size: clamp(26px, 6vw, 34px);
+  margin: 10px 0 12px;
+}
+.ban-reason {
+  padding: 10px 12px;
+  border-left: 3px solid var(--band-red);
+  background: var(--soft);
+  border-radius: 8px;
+}
+.ban-card .primary {
+  margin-top: 8px;
+}
+
+/* ---- Admin: user access ---- */
+.user-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.user-status.online {
+  color: var(--text);
+}
+.user-status.online i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #22c55e 25%, transparent);
+}
+.user-status.blocked,
+.user-status.suspended {
+  color: var(--band-red);
+  font-weight: 600;
+  white-space: normal;
+}
+.user-filter {
+  margin: 12px 0;
+  flex-wrap: wrap;
+}
+.access-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 14px 0 18px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--soft);
+}
+.access-card input {
+  width: 100%;
+}
+.access-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.access-actions select {
+  width: auto;
+}
+.secondary.danger-button {
+  color: var(--band-red);
+  border-color: color-mix(in srgb, var(--band-red) 45%, var(--line));
+}
