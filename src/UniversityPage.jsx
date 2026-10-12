@@ -1,22 +1,53 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Atom,
+  Award,
+  BarChart3,
+  Binary,
   BookMarked,
+  BookOpen,
+  Brain,
+  Briefcase,
+  Calculator,
   ChevronRight,
+  ClipboardList,
+  Code2,
+  Cpu,
+  Database,
   ExternalLink,
+  FileImage,
+  FileQuestion,
   FileText,
+  FlaskConical,
   Folder,
   FolderPlus,
+  Globe,
+  GraduationCap,
+  Languages,
+  Layers,
+  Lightbulb,
+  Microscope,
+  Network,
+  Palette,
+  PenTool,
   Pencil,
   Plus,
+  Presentation,
+  Scale,
   Search,
+  Server,
   Settings2,
+  Shield,
+  Sigma,
+  Star,
   Trash2,
   Upload,
+  UploadCloud,
   X,
 } from "lucide-react";
 import Thinking from "./Thinking";
 import { downloadBlob, readDocument, warmUpReader } from "./documents";
-import { validateFile } from "./logic";
+import { UPLOAD_ACCEPT, UPLOAD_HINT, validateFile } from "./logic";
 import {
   DEFAULT_OPTIONS,
   EXAMS,
@@ -34,7 +65,9 @@ import {
   saveUniOptions,
   searchNodes,
   updateNode,
+  viewableInBrowser,
 } from "./university";
+import { fileExtension } from "./logic";
 
 const KEY = "studymind-university";
 const readChoice = () => {
@@ -50,6 +83,112 @@ const FILTERS = [
   ["supply", "Supply"],
 ];
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+// Icons the admin can give a subject or folder ("icon": a key below, or any
+// emoji). Without one, the name suggests it (Unit → layers, Lab → flask…).
+export const ICONS = {
+  folder: ["Folder", Folder],
+  book: ["Book", BookOpen],
+  subject: ["Subject", BookMarked],
+  units: ["Units", Layers],
+  star: ["Important", Star],
+  question: ["Questions", FileQuestion],
+  papers: ["Papers", ClipboardList],
+  notes: ["Notes", PenTool],
+  idea: ["Concepts", Lightbulb],
+  code: ["Programming", Code2],
+  binary: ["Computing", Binary],
+  database: ["Database", Database],
+  cpu: ["Hardware", Cpu],
+  network: ["Networks", Network],
+  server: ["Systems", Server],
+  security: ["Security", Shield],
+  ai: ["AI / ML", Brain],
+  math: ["Maths", Sigma],
+  calculator: ["Calculator", Calculator],
+  chart: ["Statistics", BarChart3],
+  physics: ["Physics", Atom],
+  lab: ["Lab", FlaskConical],
+  biology: ["Biology", Microscope],
+  language: ["Language", Languages],
+  law: ["Law / Ethics", Scale],
+  business: ["Management", Briefcase],
+  globe: ["General", Globe],
+  design: ["Design", Palette],
+  award: ["Award", Award],
+  cap: ["Degree", GraduationCap],
+};
+export function autoIcon(node) {
+  const n = String(node.name || "").toLowerCase();
+  if (node.kind === "subject") return "subject";
+  if (/important|imp\b/.test(n)) return "star";
+  if (/unit|module|chapter/.test(n)) return "units";
+  if (/previous|paper|pyq|exam/.test(n)) return "papers";
+  if (/lab|practical/.test(n)) return "lab";
+  if (/question|q ?& ?a|faq/.test(n)) return "question";
+  if (/note/.test(n)) return "notes";
+  return "folder";
+}
+/** The icon to draw for a node: its own, else one from its name or type. */
+function NodeIcon({ node, size = 20 }) {
+  if (node.kind === "file") {
+    const ext = fileExtension(node.fileName);
+    const Icon = /pptx?$/.test(ext) ? Presentation : /png|jpe?g|webp/.test(ext) ? FileImage : FileText;
+    return <Icon size={size} />;
+  }
+  const own = node.icon;
+  if (own && !ICONS[own]) return <span className="uni-emoji">{own}</span>;
+  const Icon = ICONS[own || autoIcon(node)][1];
+  return <Icon size={size} />;
+}
+
+/** Admin: pick a built-in icon or type any emoji for a subject or folder. */
+function IconPicker({ node, onPick, onClose }) {
+  const [emoji, setEmoji] = useState(node.icon && !ICONS[node.icon] ? node.icon : "");
+  return (
+    <div className="icon-picker" role="dialog" aria-label={`Icon for ${node.name}`}>
+      <div className="icon-grid">
+        {Object.entries(ICONS).map(([key, [label, Icon]]) => (
+          <button
+            key={key}
+            className={(node.icon || autoIcon(node)) === key ? "active" : ""}
+            aria-label={label}
+            title={label}
+            onClick={() => onPick(key)}
+          >
+            <Icon size={18} />
+          </button>
+        ))}
+      </div>
+      <form
+        className="icon-emoji"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (emoji.trim()) onPick(emoji.trim());
+        }}
+      >
+        <input
+          aria-label="Or type an emoji"
+          placeholder="Or type an emoji, e.g. 📘"
+          value={emoji}
+          maxLength={8}
+          onChange={(e) => setEmoji(e.target.value)}
+        />
+        <button className="secondary" disabled={!emoji.trim()}>
+          Use
+        </button>
+      </form>
+      <div className="icon-picker-foot">
+        <button className="text-button" onClick={() => onPick(null)}>
+          Automatic icon
+        </button>
+        <button className="text-button" onClick={onClose}>
+          Close
+        </button>
+      </div>
+    </div>
+  );
+}
 
 /** Admin: edit the universities, degrees and years students can pick. */
 function OptionsEditor({ options, onSave, onClose }) {
@@ -159,6 +298,9 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
   const [newExam, setNewExam] = useState("both");
   const [uploads, setUploads] = useState([]);
   const [opening, setOpening] = useState(null);
+  const [iconFor, setIconFor] = useState(null); // node id with the picker open
+  const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
   const fileInput = useRef(null);
   const loadToken = useRef(0);
 
@@ -259,6 +401,15 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
       notify(e.message || "Could not change it.");
     }
   }
+  async function setIcon(node, icon) {
+    setIconFor(null);
+    try {
+      await updateNode(node.id, { icon: icon || null });
+      setNodes((all) => all.map((n) => (n.id === node.id ? { ...n, icon: icon || null } : n)));
+    } catch (e) {
+      notify(e.message || "Could not change the icon.");
+    }
+  }
   async function remove(node) {
     const { folders, files } = counts(node);
     const inside = folders + files ? ` and everything in it (${plural(folders, "folder")}, ${plural(files, "file")})` : "";
@@ -325,6 +476,15 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
     }
   }
   async function openOriginal(node) {
+    // Word and PowerPoint files can't show in a tab: download them.
+    if (!viewableInBrowser(node.mime)) {
+      try {
+        downloadBlob(await loadOriginal(node), node.fileName || node.name);
+      } catch (e) {
+        notify(e.message || "Could not download the original file.");
+      }
+      return;
+    }
     // Opened before the download finishes, so the browser allows the tab.
     const tab = window.open("", "_blank");
     try {
@@ -342,7 +502,6 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
   const card = (node, extra) => {
     const isFile = node.kind === "file";
     const c = isFile ? null : counts(node);
-    const Icon = isFile ? FileText : node.kind === "subject" ? BookMarked : Folder;
     return (
       <li className={`uni-card ${node.kind}`} key={node.id}>
         <button
@@ -352,7 +511,7 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
           aria-label={`Open ${node.name}`}
         >
           <span className="uni-card-icon" aria-hidden="true">
-            <Icon size={20} />
+            <NodeIcon node={node} />
           </span>
           <span className="uni-card-text">
             <strong>{node.name}</strong>
@@ -374,7 +533,7 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
           <div className="uni-card-actions">
             {isFile && node.hasOriginal && (
               <button className="text-button" onClick={() => openOriginal(node)} aria-label={`Open original ${node.name}`}>
-                <ExternalLink size={14} /> Original
+                <ExternalLink size={14} /> {viewableInBrowser(node.mime) ? "Original" : "Download original"}
               </button>
             )}
             {admin && (
@@ -390,6 +549,16 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
                     </option>
                   ))}
                 </select>
+                {!isFile && (
+                  <button
+                    className="icon-button"
+                    aria-label={`Change icon for ${node.name}`}
+                    aria-expanded={iconFor === node.id}
+                    onClick={() => setIconFor((id) => (id === node.id ? null : node.id))}
+                  >
+                    <Palette size={14} />
+                  </button>
+                )}
                 <button className="icon-button" aria-label={`Rename ${node.name}`} onClick={() => rename(node)}>
                   <Pencil size={14} />
                 </button>
@@ -400,6 +569,9 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
             )}
           </div>
         ) : null}
+        {admin && iconFor === node.id && (
+          <IconPicker node={node} onPick={(icon) => setIcon(node, icon)} onClose={() => setIconFor(null)} />
+        )}
       </li>
     );
   };
@@ -508,7 +680,43 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
         <button className="primary">Search</button>
       </form>
 
-      <section className="panel uni-browser" aria-label={where}>
+      <section
+        className={"panel uni-browser" + (dragging ? " dragging" : "")}
+        aria-label={where}
+        onDragEnter={(e) => {
+          if (!admin || !Array.from(e.dataTransfer?.types || []).includes("Files")) return;
+          e.preventDefault();
+          dragDepth.current++;
+          setDragging(true);
+        }}
+        onDragOver={(e) => {
+          if (admin && Array.from(e.dataTransfer?.types || []).includes("Files")) e.preventDefault();
+        }}
+        onDragLeave={() => {
+          if (--dragDepth.current <= 0) {
+            dragDepth.current = 0;
+            setDragging(false);
+          }
+        }}
+        onDrop={(e) => {
+          if (!admin) return;
+          e.preventDefault();
+          dragDepth.current = 0;
+          setDragging(false);
+          if (!folderId || searched)
+            return notify("Open a subject or folder first, then drop the files into it.");
+          uploadFiles(e.dataTransfer.files);
+        }}
+      >
+        {dragging && (
+          <div className="uni-drop" aria-hidden="true">
+            <UploadCloud size={30} />
+            <strong>
+              {folderId && !searched ? `Drop to upload to “${current?.name}”` : "Open a subject or folder to upload"}
+            </strong>
+            <small>{UPLOAD_HINT}</small>
+          </div>
+        )}
         {searched ? (
           <>
             <div className="uni-head">
@@ -589,6 +797,11 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
                   )}
                 </form>
                 {folderId && (
+                  <p className="fine uni-drop-hint">
+                    <UploadCloud size={14} /> Drag and drop files anywhere on this panel, or use Upload files. {UPLOAD_HINT}, up to 25 MB each.
+                  </p>
+                )}
+                {folderId && (
                   <div className="chips" aria-label="Quick folders">
                     {FOLDER_SUGGESTIONS.filter((s) => !items.some((n) => n.name.toLocaleLowerCase() === s.toLocaleLowerCase())).map((s) => (
                       <button key={s} className="chip" onClick={() => addNode(s)}>
@@ -602,7 +815,7 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
                   type="file"
                   hidden
                   multiple
-                  accept=".pdf,.txt"
+                  accept={UPLOAD_ACCEPT}
                   aria-label="Choose files to upload"
                   onChange={(e) => uploadFiles(e.target.files)}
                 />

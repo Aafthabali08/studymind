@@ -114,7 +114,10 @@ service cloud.firestore {
         && request.resource.data.name is string
         && request.resource.data.name.size() > 0
         && request.resource.data.name.size() <= 120
-        && request.resource.data.exam in ["both", "regular", "supply"];
+        && request.resource.data.exam in ["both", "regular", "supply"]
+        // Optional icon: a built-in icon name or an emoji.
+        && (!("icon" in request.resource.data) || request.resource.data.icon == null
+            || (request.resource.data.icon is string && request.resource.data.icon.size() <= 24));
       allow delete: if isAdmin();
       // A file's parts, images and original chunks (one level below the
       // node; "{sub=**}" would also match the node itself and skip its checks).

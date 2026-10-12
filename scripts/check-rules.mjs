@@ -93,6 +93,9 @@ await check("student edits university options", false, () => F.setDoc(F.doc(stu.
 await check("admin edits university options", true, () => F.setDoc(F.doc(adm.db, "uni", "options"), { universities: ["GITAM VIZAG"], degrees: ["CSE CORE"], years: ["1", "2", "3", "4"] }));
 await check("admin adds a subject", true, () => F.setDoc(subj, { ...scope, kind: "subject", name: "DBMS", parentId: null, exam: "both" }));
 await check("admin adds a node with a bad kind", false, () => F.setDoc(F.doc(F.collection(adm.db, "uniNodes")), { ...scope, kind: "virus", name: "x", exam: "both" }));
+await check("admin sets a subject icon", true, () => F.updateDoc(subj, { icon: "📘" }));
+await check("admin sets a 100-character icon", false, () => F.updateDoc(subj, { icon: "x".repeat(100) }));
+await check("student changes a subject icon", false, () => F.updateDoc(F.doc(stu.db, "uniNodes", subj.id), { icon: "lab" }));
 await check("student adds a subject", false, () => F.setDoc(F.doc(F.collection(stu.db, "uniNodes")), { ...scope, kind: "subject", name: "Hack", parentId: null, exam: "both" }));
 await check("student lists subjects", true, () => F.getDocs(F.query(F.collection(stu.db, "uniNodes"), F.where("university", "==", scope.university), F.where("degree", "==", scope.degree), F.where("year", "==", scope.year))));
 await check("admin adds file text", true, () => F.setDoc(F.doc(adm.db, "uniNodes", subj.id, "parts", "0"), { index: 0, pages: ["text"] }));

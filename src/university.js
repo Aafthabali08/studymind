@@ -9,6 +9,25 @@
 //   uniNodes/{id}/blobs/{n}           the original file, base64 in < 1 MB chunks
 //   users/{uid}/uniStudy/{id}         each user's own notes / question bank
 import { firebase } from "./firebase";
+import { baseName, fileExtension } from "./logic";
+
+const MIMES = {
+  pdf: "application/pdf",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  doc: "application/msword",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ppt: "application/vnd.ms-powerpoint",
+  txt: "text/plain",
+  md: "text/markdown",
+  csv: "text/csv",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+};
+export const mimeFor = (name) => MIMES[fileExtension(name)] || "application/octet-stream";
+/** Opens in a browser tab (PDF, images, text); other files download. */
+export const viewableInBrowser = (mime) => /^(application\/pdf|image\/|text\/)/.test(mime || "");
 
 export const DEFAULT_OPTIONS = {
   universities: ["GITAM VIZAG"],
@@ -190,6 +209,7 @@ export async function loadNodes({ university, degree, year }) {
       hasOriginal: Boolean(x.blobCount),
       blobCount: x.blobCount || 0,
       mime: x.mime || "",
+      icon: x.icon || null,
     };
   });
 }
@@ -240,14 +260,14 @@ export async function saveUniFile({ scope, parentId, exam = "both", file, pages,
     chunks.push(original.slice(i, i + BLOB_CHARS));
   const node = {
     kind: "file",
-    name: file.name.replace(/\.(pdf|txt)$/i, ""),
+    name: baseName(file.name),
     parentId,
     exam,
     university: scope.university,
     degree: scope.degree,
     year: String(scope.year),
     fileName: file.name,
-    mime: file.type || (/\.pdf$/i.test(file.name) ? "application/pdf" : "text/plain"),
+    mime: file.type || mimeFor(file.name),
     size: file.size,
     pageCount: pages.length,
     imageCount: images.length,

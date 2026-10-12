@@ -943,7 +943,7 @@ describe("uploads", () => {
       ).toHaveLength(2),
     );
     expect(within(list).getByText("virus.exe")).toBeVisible();
-    expect(within(list).getByText(/Choose a PDF or TXT/)).toBeVisible();
+    expect(within(list).getByText(/Choose a PDF, Word, PowerPoint/)).toBeVisible();
     expect(cloud.saveDocument).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("status")).toHaveTextContent(
       "2 documents are ready in your library.",
@@ -979,7 +979,7 @@ describe("uploads", () => {
     fireEvent.drop(document.querySelector(".upload-card"), {
       dataTransfer: { files: [new File(["x"], "x.exe")] },
     });
-    expect(screen.getByRole("status")).toHaveTextContent("Choose a PDF or TXT");
+    expect(screen.getByRole("status")).toHaveTextContent("Choose a PDF, Word, PowerPoint, images, TXT, Markdown or CSV file.");
     expect(documents.readDocument).not.toHaveBeenCalled();
   });
   it("keeps the dialog open while files are read", async () => {

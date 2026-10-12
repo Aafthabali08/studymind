@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -195,4 +195,52 @@ it("lets the admin add subjects and folders, upload files, rename, delete and ed
   );
   expect(notify).toHaveBeenCalledWith(expect.stringMatching(/Options saved/));
   expect(screen.getByRole("option", { name: "GITAM Hyderabad" })).toBeInTheDocument();
+});
+
+it("lets the admin drop files onto a folder, pick icons, and download Office originals", async () => {
+  const documents = await import("../src/documents");
+  const nodes = [
+    ...NODES,
+    { id: "pp", kind: "file", name: "ER slides", parentId: "f2", exam: "both", pageCount: 9, hasOriginal: true, fileName: "ER slides.pptx", mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation", ...scope },
+  ];
+  api.loadNodes.mockResolvedValue(nodes);
+  api.updateNode.mockResolvedValue();
+  api.loadOriginal.mockResolvedValue(new Blob(["pptx"]));
+  api.saveUniFile.mockImplementation(async ({ parentId, file }) => ({ id: `new-${file.name}`, kind: "file", name: file.name.replace(/\.\w+$/, ""), parentId, exam: "both", pageCount: 2, fileName: file.name, hasOriginal: true }));
+  const { notify } = renderPage({ admin: true });
+  await userEvent.click(await screen.findByRole("button", { name: "Open DBMS" }));
+
+  // Icons: automatic from the name, a built-in one, or any emoji.
+  await userEvent.click(screen.getByRole("button", { name: "Change icon for Unit 2" }));
+  const picker = screen.getByRole("dialog", { name: "Icon for Unit 2" });
+  expect(within(picker).getByRole("button", { name: "Units" })).toHaveClass("active");
+  await userEvent.click(within(picker).getByRole("button", { name: "Database" }));
+  expect(api.updateNode).toHaveBeenLastCalledWith("f2", { icon: "database" });
+  await userEvent.click(screen.getByRole("button", { name: "Change icon for Important questions" }));
+  await userEvent.type(screen.getByLabelText("Or type an emoji"), "⭐");
+  await userEvent.click(screen.getByRole("button", { name: "Use" }));
+  expect(api.updateNode).toHaveBeenLastCalledWith("fi", { icon: "⭐" });
+  expect(screen.getByRole("button", { name: "Open Important questions" })).toHaveTextContent("⭐");
+
+  // Drag and drop: Word, PowerPoint and images upload like PDFs.
+  await userEvent.click(screen.getByRole("button", { name: "Open Unit 2" }));
+  const panel = document.querySelector(".uni-browser");
+  const files = [new File(["w"], "Normal forms.docx"), new File(["p"], "Keys.pptx"), new File(["i"], "Board.png", { type: "image/png" })];
+  fireEvent.dragEnter(panel, { dataTransfer: { types: ["Files"], files } });
+  expect(screen.getByText("Drop to upload to “Unit 2”")).toBeInTheDocument();
+  fireEvent.drop(panel, { dataTransfer: { types: ["Files"], files } });
+  expect(await screen.findByRole("button", { name: "Open Board" })).toBeVisible();
+  expect(api.saveUniFile.mock.calls.map(([a]) => a.file.name)).toEqual(["Normal forms.docx", "Keys.pptx", "Board.png"]);
+  expect(api.saveUniFile).toHaveBeenCalledWith(expect.objectContaining({ parentId: "f2" }));
+  expect(screen.queryByText(/Drop to upload/)).toBeNull();
+
+  // PowerPoint can't open in a tab: its original downloads with its name.
+  await userEvent.click(screen.getByRole("button", { name: "Open original ER slides" }));
+  expect(documents.downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "ER slides.pptx");
+  expect(screen.getByRole("button", { name: "Open original ER slides" })).toHaveTextContent("Download original");
+
+  // At the top level there is no folder to drop into.
+  await userEvent.click(within(screen.getByRole("navigation", { name: "Folder path" })).getByRole("button", { name: "Subjects" }));
+  fireEvent.drop(panel, { dataTransfer: { types: ["Files"], files } });
+  expect(notify).toHaveBeenLastCalledWith("Open a subject or folder first, then drop the files into it.");
 });

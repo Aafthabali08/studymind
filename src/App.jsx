@@ -31,7 +31,14 @@ import {
   AlertCircle,
   Loader2,
 } from "lucide-react";
-import { initialTheme, saveTheme, validateFile } from "./logic";
+import {
+  UPLOAD_ACCEPT,
+  UPLOAD_HINT,
+  baseName,
+  initialTheme,
+  saveTheme,
+  validateFile,
+} from "./logic";
 import { downloadText, readDocument, warmUpReader } from "./documents";
 import Particles from "./Particles";
 import Thinking from "./Thinking";
@@ -524,7 +531,7 @@ export default function App() {
               id,
               cloudId: id,
               cloud: true,
-              name: file.name.replace(/\.(pdf|txt)$/i, ""),
+              name: baseName(file.name),
               file: file.name,
               pages,
               images: [],
@@ -1082,12 +1089,12 @@ export default function App() {
                       <span className="mini-plus">+</span>
                     </div>
                     <h2>Your next chapter starts here.</h2>
-                    <p>Drop one PDF or many. Unpack every idea.</p>
+                    <p>Drop one file or many: PDF, Word, PowerPoint or images. Unpack every idea.</p>
                     <button className="primary" onClick={openUpload}>
                       <Plus size={17} /> Upload documents
                     </button>
                     <span className="fine">
-                      PDF or TXT · Many at once · Up to 25 MB each
+                      {UPLOAD_HINT} · Many at once · Up to 25 MB each
                     </span>
                   </div>
                 </div>
@@ -1404,7 +1411,7 @@ export default function App() {
         ref={fileRef}
         type="file"
         aria-label="Choose study files"
-        accept=".pdf,.txt"
+        accept={UPLOAD_ACCEPT}
         multiple
         hidden
         onChange={(e) => upload(e.target.files)}
@@ -1452,7 +1459,7 @@ export default function App() {
                       : "Choose files or drop them here"}
                   </strong>
                   <small>
-                    PDF or TXT · Several at once · Maximum 25 MB each
+                    {UPLOAD_HINT} · Several at once · Maximum 25 MB each
                   </small>
                 </button>
                 {queue.length > 0 && (

@@ -1,7 +1,30 @@
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
+/** File types that can be uploaded and read (see documents.js / officeReader.js). */
+export const UPLOAD_TYPES = {
+  pdf: "PDF",
+  docx: "Word",
+  doc: "Word 97–2003",
+  pptx: "PowerPoint",
+  ppt: "PowerPoint 97–2003",
+  txt: "Text",
+  md: "Markdown",
+  csv: "CSV",
+  png: "Image",
+  jpg: "Image",
+  jpeg: "Image",
+  webp: "Image",
+};
+export const UPLOAD_ACCEPT = Object.keys(UPLOAD_TYPES)
+  .map((ext) => `.${ext}`)
+  .join(",");
+export const UPLOAD_HINT = "PDF, Word, PowerPoint, images, TXT, Markdown or CSV";
+export const fileExtension = (name) =>
+  (String(name || "").match(/\.([a-z0-9]{1,5})$/i)?.[1] || "").toLowerCase();
+/** "Unit 1 notes.pptx" → "Unit 1 notes" */
+export const baseName = (name) => String(name || "").replace(/\.[a-z0-9]{1,5}$/i, "");
 export function validateFile(file) {
-  if (!file || !/\.(pdf|txt)$/i.test(file.name))
-    throw new Error("Choose a PDF or TXT file.");
+  if (!file || !UPLOAD_TYPES[fileExtension(file.name)])
+    throw new Error(`Choose a ${UPLOAD_HINT} file.`);
   if (file.size > MAX_FILE_BYTES)
     throw new Error("Please choose a file smaller than 25 MB.");
   if (!file.size)

@@ -5857,3 +5857,80 @@ button.local-label {
   color: var(--band-red);
   border-color: color-mix(in srgb, var(--band-red) 45%, var(--line));
 }
+
+/* University: drag and drop, icons */
+.uni-browser {
+  position: relative;
+}
+.uni-browser.dragging {
+  outline: 2px dashed var(--band-blue);
+  outline-offset: -6px;
+}
+.uni-drop {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--solid) 88%, transparent);
+  color: var(--band-blue);
+  text-align: center;
+  pointer-events: none;
+}
+.uni-drop small {
+  color: var(--muted);
+}
+.uni-drop-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+.uni-emoji {
+  font-size: 20px;
+  line-height: 1;
+}
+.uni-card {
+  position: relative;
+}
+.icon-picker {
+  padding: 12px;
+  border-top: 1px solid var(--line);
+  background: var(--solid);
+}
+.icon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(38px, 1fr));
+  gap: 6px;
+}
+.icon-grid button {
+  display: grid;
+  place-items: center;
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--soft);
+  color: var(--text);
+}
+.icon-grid button.active {
+  border-color: var(--band-blue);
+  color: var(--band-blue);
+  background: color-mix(in srgb, var(--band-blue) 12%, transparent);
+}
+.icon-emoji {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.icon-emoji input {
+  flex: 1;
+  min-width: 0;
+}
+.icon-picker-foot {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+}

@@ -1,5 +1,5 @@
 import "./streamPolyfill";
-import { validateFile, validatePages } from "./logic";
+import { fileExtension, validateFile, validatePages } from "./logic";
 let pdfWorker;
 const MAX_IMAGES = 40,
   MAX_PER_PAGE = 6,
@@ -230,6 +230,17 @@ function releaseOcrWorkers() {
   }, OCR_IDLE_MS);
 }
 
+/** Text of a photo or scan (PNG, JPG, WEBP) with OCR. */
+export async function ocrImage(file) {
+  const [worker] = await ocrWorkers(1);
+  try {
+    const { data } = await worker.recognize(file);
+    return cleanOcrText(data.text);
+  } finally {
+    releaseOcrWorkers();
+  }
+}
+
 /** OCR of the given pages, in parallel; progress is reported per page. */
 async function ocrPages(pdf, pages, indexes, onProgress) {
   const total = indexes.length;
@@ -287,7 +298,8 @@ export function warmUpReader() {
 }
 
 /**
- * Reads a PDF or TXT file. Returns the page texts, or `{ pages, images }` when
+ * Reads an upload (PDF here; Word, PowerPoint, images and text files in
+ * officeReader.js). Returns the page texts, or `{ pages, images }` when
  * `images: true` (figures are extracted from PDFs only).
  */
 export async function readDocument(
@@ -295,9 +307,14 @@ export async function readDocument(
   { images: withImages = false, onText, onProgress, ocr = true } = {},
 ) {
   validateFile(file);
-  if (/\.txt$/i.test(file.name)) {
-    const pages = validatePages((await file.text()).split(/\f/));
-    return withImages ? { pages, images: [] } : pages;
+  if (fileExtension(file.name) !== "pdf") {
+    // Word, PowerPoint, images, text: see officeReader.js.
+    const { readOffice } = await import("./officeReader");
+    const read = await readOffice(file, { images: withImages, onProgress });
+    const pages = validatePages(read.pages);
+    if (!withImages) return pages;
+    onText?.(pages);
+    return { pages, images: read.images };
   }
   const pdfjs = await loadPdfjs();
   const task = pdfjs.getDocument({

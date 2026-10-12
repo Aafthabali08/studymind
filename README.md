@@ -10,7 +10,7 @@ Visitors first see a **demo page**. Every feature (library, uploads, notes, ques
 
 ## Features
 
-- **Multiple uploads**: drop or pick many PDFs/TXT files at once, with per-file progress. Text and figures are saved to Firebase.
+- **Multiple uploads**: drop or pick many files at once: PDF, Word (.docx, .doc), PowerPoint (.pptx, .ppt; one page per slide with speaker notes), images (read with OCR), TXT, Markdown or CSV, with per-file progress. Text and figures are saved to Firebase.
 - **Library**: search, and delete any document (with its figures, notes and questions) from its card or from inside it.
 - **Notes**: headings, sub-headings, detailed paragraphs, figures from the PDF and highlighted code blocks (copy button). Editable, synced.
 - **Question bank**: 2, 5 and 8-mark questions with model answers and page references, generated after upload.
@@ -31,7 +31,7 @@ Everything runs on the free Firebase **Spark** plan and the free Gemini API tier
   - **Overview:** users, active now, active this week, blocked or suspended, documents, open tickets, AI accuracy from feedback, feedback per feature.
   - **Users:** search by email; status (**Active now** = used the app in the last 5 minutes, Offline, Blocked, Suspended until …), documents, tickets, joined and last active. Filter by *Active now* or *Blocked & suspended*.
   - **Block or suspend a user:** open the user → Access. **Suspend** for 1 hour, 1 day, 3 days, 1 week or 30 days (it ends by itself), or **Block** until you unblock them, with an optional reason the user sees. Enforced by the Firestore rules: a blocked or suspended account can't read or save any data, and the app shows them a locked screen. The admin account can't be blocked.
-  - **University library:** on the University page, add subjects, folders (one-tap Unit 1–5, Important questions, Previous papers, Notes, Lab) and upload PDF/TXT files into them; tag each as Regular, Supply or both; rename and delete (a folder with everything in it). **Edit options** adds or removes universities, degrees and years.
+  - **University library:** on the University page, add subjects, folders (one-tap Unit 1–5, Important questions, Previous papers, Notes, Lab) and upload files into them with **Upload files** or by **dragging and dropping** onto the folder (PDF, Word, PowerPoint, images, TXT, Markdown, CSV); give each subject or folder its own **icon** (30 built-in or any emoji); tag each as Regular, Supply or both; rename and delete (a folder with everything in it). **Edit options** adds or removes universities, degrees and years.
   - **Tickets:** read the complaint, reply, set the status (Open, In progress, Resolved, Closed). The user gets a 🔔 notification.
   - **Feedback:** everything users marked ✓ correct or ✗ wrong. One click turns it into an AI guidance rule.
   - **AI guidance:** rules added to every Gemini prompt for every user.
@@ -58,11 +58,11 @@ firebase deploy --only firestore:rules
 ```sh
 npm install
 npm run dev     # http://127.0.0.1:5173
-npm test        # 213 tests
+npm test        # 221 tests
 npm run build
 npm run preview # production build at http://127.0.0.1:4173
 npm run deploy  # tests + build + Firebase Hosting + Firestore rules
-npm run test:rules  # 67 security-rule checks on local emulators (needs Java)
+npm run test:rules  # 70 security-rule checks on local emulators (needs Java)
 ```
 
 ### Test everything locally (no real accounts)
