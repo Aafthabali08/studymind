@@ -64,7 +64,9 @@ import {
   pathOf,
   saveUniFile,
   saveUniOptions,
-  searchNodes,
+  loadAllNodes,
+  indexFiles,
+  visible as visibleIn,
   updateNode,
   viewableInBrowser,
   copyNode,
@@ -73,6 +75,9 @@ import {
   transferProblem,
 } from "./university";
 import { fileExtension } from "./logic";
+import { smartSearch } from "./uniSearch";
+
+const ALL_TTL = 5 * 60 * 1000; // the whole library is re-read at most every 5 minutes
 
 const KEY = "studymind-university";
 const readChoice = () => {
@@ -485,6 +490,10 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
   const [folderId, setFolderId] = useState(null);
   const [query, setQuery] = useState("");
   const [searched, setSearched] = useState("");
+  const [searchIn, setSearchIn] = useState("all"); // all | course
+  const [library, setLibrary] = useState({ nodes: null, at: 0, status: "idle" });
+  const [indexing, setIndexing] = useState("");
+  const pendingFolder = useRef(null); // a folder to open once its course loads
   const [editingOptions, setEditingOptions] = useState(false);
   const [newName, setNewName] = useState("");
   const [newExam, setNewExam] = useState("both");
@@ -529,6 +538,10 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
         if (token !== loadToken.current) return;
         setNodes(list);
         setStatus("ready");
+        // Opened from a search result in another course.
+        if (pendingFolder.current && list.some((n) => n.id === pendingFolder.current))
+          setFolderId(pendingFolder.current);
+        pendingFolder.current = null;
       })
       .catch(() => token === loadToken.current && setStatus("error"));
   }
@@ -553,7 +566,44 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
   }, [status, folderId, current]);
   const path = current ? pathOf(nodes, current.id) : [];
   const items = childrenOf(nodes, folderId, exam);
-  const results = useMemo(() => searchNodes(nodes, searched, exam), [nodes, searched, exam]);
+  // Search: every university, degree and year (or just this course).
+  function loadLibrary(force = false) {
+    if (!force && library.nodes && Date.now() - library.at < ALL_TTL) return;
+    setLibrary((l) => ({ ...l, status: "loading" }));
+    loadAllNodes()
+      .then((list) => setLibrary({ nodes: list, at: Date.now(), status: "ready" }))
+      .catch(() => setLibrary((l) => ({ ...l, status: "error" })));
+  }
+  // Anything the admin changes here shows in the next search.
+  useEffect(() => {
+    setLibrary((l) => (l.nodes ? { ...l, at: 0 } : l));
+  }, [nodes]);
+  const pool = searchIn === "all" ? library.nodes || [] : nodes;
+  const found = useMemo(
+    () =>
+      smartSearch(pool, searched, {
+        filter: exam,
+        course: choice,
+        visible: (n, f) => visibleIn(pool, n, f),
+      }),
+    [pool, searched, exam, choice],
+  );
+  const results = found.results;
+  const unindexed = admin && library.nodes ? library.nodes.filter((n) => n.kind === "file" && !n.keywords).length : 0;
+  const sameCourse = (n) =>
+    n.university === choice.university && n.degree === choice.degree && String(n.year) === String(choice.year);
+  const courseOf = (n) => `${n.university} · ${n.degree} · Year ${n.year}`;
+  const resultLine = (node, p) =>
+    [
+      !sameCourse(node) && courseOf(node),
+      p.length > 1 ? p.slice(0, -1).map((x) => x.name).join(" › ") : node.kind === "subject" ? "Subject" : null,
+    ]
+      .filter(Boolean)
+      .join(" — ");
+  function runSearch(q) {
+    setSearched(q);
+    if (q && searchIn === "all") loadLibrary();
+  }
   const counts = (node) => {
     const inside = descendants(nodes, node.id).slice(1);
     return {
@@ -660,14 +710,19 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
 
   // ---- Opening -------------------------------------------------------------------
   async function open(node) {
+    const other = node.university && !sameCourse(node);
     if (node.kind !== "file") {
-      setFolderId(node.id);
+      if (other) {
+        // A folder in another course: switch to it, then open the folder.
+        pendingFolder.current = node.id;
+        setChoice({ university: node.university, degree: node.degree, year: String(node.year) });
+      } else setFolderId(node.id);
       setSearched("");
       return;
     }
     setOpening(node.id);
     try {
-      await onOpenFile(node, pathOf(nodes, node.id));
+      await onOpenFile(node, pathOf(other ? library.nodes || [] : nodes, node.id));
     } catch (e) {
       notify(e.message || "Could not open this file.");
     } finally {
@@ -700,6 +755,8 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
 
   const card = (node, extra) => {
     const isFile = node.kind === "file";
+    // Admin tools act on the course shown; results from others are read-only.
+    const editable = admin && (!node.university || sameCourse(node));
     const c = isFile ? null : counts(node);
     return (
       <li className={`uni-card ${node.kind}`} key={node.id}>
@@ -728,14 +785,14 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
           <ExamBadge exam={node.exam} />
           {opening === node.id ? <span className="fine">Opening…</span> : <ChevronRight size={16} aria-hidden="true" />}
         </button>
-        {(isFile && node.hasOriginal) || admin ? (
+        {(isFile && node.hasOriginal) || editable ? (
           <div className="uni-card-actions">
             {isFile && node.hasOriginal && (
               <button className="text-button" onClick={() => openOriginal(node)} aria-label={`Open original ${node.name}`}>
                 <ExternalLink size={14} /> {viewableInBrowser(node.mime) ? "Original" : "Download original"}
               </button>
             )}
-            {admin && (
+            {editable && (
               <>
                 <select
                   aria-label={`Exam for ${node.name}`}
@@ -776,7 +833,7 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
             )}
           </div>
         ) : null}
-        {admin && iconFor === node.id && (
+        {editable && iconFor === node.id && (
           <IconPicker node={node} onPick={(icon) => setIcon(node, icon)} onClose={() => setIconFor(null)} />
         )}
       </li>
@@ -884,14 +941,14 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
         role="search"
         onSubmit={(e) => {
           e.preventDefault();
-          setSearched(query.trim());
+          runSearch(query.trim());
         }}
       >
         <Search size={17} aria-hidden="true" />
         <input
           aria-label="Search subjects, folders and files"
           value={query}
-          placeholder="Search subjects, units, files…  e.g. DBMS unit 2"
+          placeholder="Search every course: subjects, units, topics…  e.g. dbms unit 2"
           onChange={(e) => {
             setQuery(e.target.value);
             if (!e.target.value) setSearched("");
@@ -912,6 +969,24 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
         )}
         <button className="primary">Search</button>
       </form>
+      <div className="segmented uni-search-scope" role="group" aria-label="Search in">
+        {[
+          ["all", "All courses"],
+          ["course", "This course"],
+        ].map(([v, l]) => (
+          <button
+            key={v}
+            aria-pressed={searchIn === v}
+            className={searchIn === v ? "active" : ""}
+            onClick={() => {
+              setSearchIn(v);
+              if (v === "all" && searched) loadLibrary();
+            }}
+          >
+            {l}
+          </button>
+        ))}
+      </div>
 
       <section
         className={"panel uni-browser" + (dragging ? " dragging" : "")}
@@ -954,20 +1029,62 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
           <>
             <div className="uni-head">
               <div>
-                <span className="eyebrow">SEARCH · {where.toUpperCase()}</span>
+                <span className="eyebrow">
+                  SEARCH · {searchIn === "all" ? "ALL COURSES" : where.toUpperCase()}
+                </span>
                 <h2>
                   {plural(results.length, "result")} for “{searched}”
                 </h2>
               </div>
+              {unindexed > 0 && (
+                <button
+                  className="text-button"
+                  disabled={Boolean(indexing)}
+                  onClick={async () => {
+                    setIndexing("Reading files…");
+                    try {
+                      const n = await indexFiles(library.nodes, (done, total) => setIndexing(`Reading ${done} of ${total}…`));
+                      setLibrary((l) => ({ ...l, nodes: [...l.nodes] }));
+                      notify(`Search now looks inside ${plural(n, "more file")}.`);
+                    } catch (e) {
+                      notify(e.message || "Could not update search.");
+                    } finally {
+                      setIndexing("");
+                    }
+                  }}
+                >
+                  <Search size={14} /> {indexing || `Search inside ${plural(unindexed, "older file")}`}
+                </button>
+              )}
             </div>
-            {results.length ? (
-              <ul className="uni-grid">
-                {results.map(({ node, path: p }) =>
-                  card(node, p.length > 1 ? p.slice(0, -1).map((x) => x.name).join(" › ") : node.kind === "subject" ? "Subject" : undefined),
-                )}
-              </ul>
+            {searchIn === "all" && library.status === "loading" && !library.nodes ? (
+              <Thinking label="Searching every course…" lines={2} />
+            ) : searchIn === "all" && library.status === "error" && !library.nodes ? (
+              <p className="uni-empty">
+                Search could not load the library.{" "}
+                <button className="text-button" onClick={() => loadLibrary(true)}>
+                  Try again
+                </button>
+              </p>
             ) : (
-              <p className="uni-empty">Nothing matches. Try a subject name or “unit 1”.</p>
+              <>
+                {results.length > 0 && (
+                  <ul className="uni-grid">{results.map(({ node, path: p }) => card(node, resultLine(node, p)))}</ul>
+                )}
+                {found.related.length > 0 && (
+                  <>
+                    <h3 className="uni-related">
+                      {results.length ? "Related" : "No exact match. Closest topics:"}
+                    </h3>
+                    <ul className="uni-grid">{found.related.map(({ node, path: p }) => card(node, resultLine(node, p)))}</ul>
+                  </>
+                )}
+                {!results.length && !found.related.length && (
+                  <p className="uni-empty">
+                    Nothing matches. Try a subject (e.g. “dbms”), a unit (“unit 2”) or a topic (“normalization”).
+                  </p>
+                )}
+              </>
             )}
           </>
         ) : (

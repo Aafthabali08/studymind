@@ -5981,3 +5981,18 @@ button.local-label {
     grid-column: 1 / -1;
   }
 }
+.uni-search-scope {
+  margin: -6px 0 16px;
+}
+.uni-related {
+  margin: 22px 0 10px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.uni-browser .uni-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+}

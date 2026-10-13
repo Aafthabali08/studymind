@@ -10,6 +10,8 @@
 //   users/{uid}/uniStudy/{id}         each user's own notes / question bank
 import { firebase } from "./firebase";
 import { baseName, fileExtension } from "./logic";
+import { fileKeywords } from "./uniSearch";
+import { extractKeywords } from "./ai/text";
 
 const MIMES = {
   pdf: "application/pdf",
@@ -191,27 +193,54 @@ export async function loadNodes({ university, degree, year }) {
       f.where("year", "==", String(year)),
     ),
   );
-  return snap.docs.map((d) => {
-    const x = d.data();
-    return {
-      id: d.id,
-      kind: x.kind,
-      name: x.name,
-      parentId: x.parentId || null,
-      exam: x.exam || "both",
-      university: x.university,
-      degree: x.degree,
-      year: x.year,
-      fileName: x.fileName || "",
-      pageCount: x.pageCount || 0,
-      imageCount: x.imageCount || 0,
-      size: x.size || 0,
-      hasOriginal: Boolean(x.blobCount),
-      blobCount: x.blobCount || 0,
-      mime: x.mime || "",
-      icon: x.icon || null,
-    };
-  });
+  return snap.docs.map(toNode);
+}
+function toNode(d) {
+  const x = d.data();
+  return {
+    id: d.id,
+    kind: x.kind,
+    name: x.name,
+    parentId: x.parentId || null,
+    exam: x.exam || "both",
+    university: x.university,
+    degree: x.degree,
+    year: x.year,
+    fileName: x.fileName || "",
+    pageCount: x.pageCount || 0,
+    imageCount: x.imageCount || 0,
+    size: x.size || 0,
+    hasOriginal: Boolean(x.blobCount),
+    blobCount: x.blobCount || 0,
+    mime: x.mime || "",
+    icon: x.icon || null,
+    keywords: x.keywords || null,
+  };
+}
+
+/** Every subject, folder and file of every course (for search). */
+export async function loadAllNodes() {
+  const { db, fns } = await firebase();
+  const f = fns.firestore;
+  const snap = await f.getDocs(f.collection(db, "uniNodes"));
+  return snap.docs.map(toNode);
+}
+
+/**
+ * Files uploaded before search keywords existed get them now (admin):
+ * reads each one's text once and saves its keywords. Returns how many.
+ */
+export async function indexFiles(nodes, onProgress) {
+  const todo = nodes.filter((n) => n.kind === "file" && !n.keywords);
+  let done = 0;
+  for (const n of todo) {
+    const { pages } = await loadUniFile(n.id);
+    const keywords = fileKeywords(pages, extractKeywords);
+    await updateNode(n.id, { keywords });
+    n.keywords = keywords;
+    onProgress?.(++done, todo.length);
+  }
+  return todo.length;
 }
 
 /** A subject (parentId null) or a folder inside a subject or folder. */
@@ -272,6 +301,8 @@ export async function saveUniFile({ scope, parentId, exam = "both", file, pages,
     pageCount: pages.length,
     imageCount: images.length,
     blobCount: chunks.length,
+    // What the file is about, for search across courses.
+    keywords: fileKeywords(pages, extractKeywords),
   };
   // The node is written last, so a half-finished upload never shows.
   const writes = [
@@ -417,6 +448,7 @@ export function planCopy(nodes, id, { scope, parentId = null }, newId) {
             pageCount: n.pageCount || 0,
             imageCount: n.imageCount || 0,
             blobCount: n.blobCount || 0,
+            ...(n.keywords ? { keywords: n.keywords } : {}),
           }
         : {}),
     },

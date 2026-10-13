@@ -68,6 +68,8 @@ const api = vi.hoisted(() => ({
   deleteNodes: vi.fn(),
   saveUniFile: vi.fn(),
   loadOriginal: vi.fn(),
+  loadAllNodes: vi.fn(),
+  indexFiles: vi.fn(),
 }));
 vi.mock("../src/university", async (orig) => ({ ...(await orig()), ...api }));
 vi.mock("../src/documents", () => ({
@@ -125,10 +127,23 @@ it("lets a student pick their course, browse folders, filter by exam, search and
   );
   expect(screen.getByRole("button", { name: "Open original Normalization notes" })).toBeVisible();
 
+  // Search looks across every course, own course first.
+  api.loadAllNodes.mockResolvedValue([
+    ...NODES,
+    { id: "y3", kind: "subject", name: "Compiler Design", parentId: null, exam: "both", university: "GITAM VIZAG", degree: "CSE CORE", year: "3" },
+    { id: "y3p", kind: "file", name: "Previous paper 2023", parentId: "y3", exam: "both", pageCount: 2, university: "GITAM VIZAG", degree: "CSE CORE", year: "3" },
+  ]);
   await userEvent.type(screen.getByLabelText("Search subjects, folders and files"), "paper");
   await userEvent.click(screen.getByRole("button", { name: "Search" }));
-  expect(screen.getByRole("heading", { name: "1 result for “paper”" })).toBeVisible();
+  expect(await screen.findByRole("heading", { name: "2 results for “paper”" })).toBeVisible();
   expect(screen.getByText("DBMS › Important questions")).toBeVisible();
+  expect(screen.getByText("GITAM VIZAG · CSE CORE · Year 3 — Compiler Design")).toBeVisible();
+  // Results from another course are read-only for the admin's tools.
+  expect(screen.queryByRole("button", { name: "Delete Previous paper 2023" })).toBeNull();
+  // Just this course.
+  await userEvent.click(screen.getByRole("button", { name: "This course" }));
+  expect(screen.getByRole("heading", { name: "1 result for “paper”" })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "All courses" }));
   await userEvent.click(screen.getByRole("button", { name: "Clear search" }));
   expect(screen.queryByText(/result for/)).toBeNull();
   // The choice is remembered for next time.
@@ -137,13 +152,13 @@ it("lets a student pick their course, browse folders, filter by exam, search and
 
 it("lets the admin add subjects and folders, upload files, rename, delete and edit the options", async () => {
   api.loadNodes.mockResolvedValue([]);
-  api.createNode.mockImplementation(async ({ parentId, kind, name, exam }) => ({
+  api.createNode.mockImplementation(async ({ scope: s, parentId, kind, name, exam }) => ({
     id: `n-${name}`,
     parentId,
     kind,
     name,
     exam,
-    ...scope,
+    ...s,
   }));
   api.saveUniFile.mockImplementation(async ({ parentId, file, pages }) => ({
     id: "file-1",
@@ -243,4 +258,35 @@ it("lets the admin drop files onto a folder, pick icons, and download Office ori
   await userEvent.click(within(screen.getByRole("navigation", { name: "Folder path" })).getByRole("button", { name: "Subjects" }));
   fireEvent.drop(panel, { dataTransfer: { types: ["Files"], files } });
   expect(notify).toHaveBeenLastCalledWith("Open a subject or folder first, then drop the files into it.");
+});
+
+it("opens a search result from another course there, and the admin can index older files for search", async () => {
+  const y3 = { university: "GITAM VIZAG", degree: "CSE CORE", year: "3" };
+  const Y3 = [
+    { id: "cd", kind: "subject", name: "Compiler Design", parentId: null, exam: "both", ...y3 },
+    { id: "cdu1", kind: "folder", name: "Unit 1", parentId: "cd", exam: "both", ...y3 },
+    { id: "lex", kind: "file", name: "Lexical analysis", parentId: "cdu1", exam: "both", ...y3 },
+  ];
+  api.loadNodes.mockImplementation(async (sc) => (sc.year === "3" ? Y3 : NODES));
+  api.loadAllNodes.mockResolvedValue([...NODES, ...Y3]);
+  api.indexFiles.mockImplementation(async (nodes, onProgress) => {
+    onProgress(1, 2);
+    nodes.filter((n) => n.kind === "file").forEach((n) => (n.keywords = n.id === "lex" ? ["tokens", "lexemes"] : ["x"]));
+    return 2;
+  });
+  const { notify } = renderPage({ admin: true });
+  await screen.findByRole("button", { name: "Open DBMS" });
+  // "cd" is short for Compiler Design.
+  await userEvent.type(screen.getByLabelText("Search subjects, folders and files"), "cd unit 1");
+  await userEvent.click(screen.getByRole("button", { name: "Search" }));
+  expect(await screen.findByRole("button", { name: "Open Unit 1" })).toBeVisible();
+  // Files without search keywords: the admin can let search look inside them.
+  await userEvent.click(screen.getByRole("button", { name: /Search inside \d+ older files/ }));
+  expect(api.indexFiles).toHaveBeenCalled();
+  expect(notify).toHaveBeenCalledWith("Search now looks inside 2 more files.");
+  // Opening a folder from Year 3 switches to Year 3 and opens it.
+  await userEvent.click(screen.getByRole("button", { name: "Open Unit 1" }));
+  expect(await screen.findByRole("button", { name: "Open Lexical analysis" })).toBeVisible();
+  expect(screen.getByLabelText("Year")).toHaveValue("3");
+  expect(within(screen.getByRole("navigation", { name: "Folder path" })).getByText("Compiler Design")).toBeVisible();
 });
