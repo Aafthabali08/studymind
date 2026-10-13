@@ -124,18 +124,22 @@ export default function AdminPage({ active, notify }) {
   async function load() {
     setLoading(true);
     try {
+      let rulesOutdated = false;
       const [u, t, f, g, b, s, a] = await Promise.all([
         adminUsers(),
         adminTickets(),
         adminFeedback(),
         loadGuidance(),
         adminBans().catch(() => ({})),
-        adminSupporters().catch(() => ({})),
-        adminAudit().catch(() => []),
+        // Refused only when the published rules are older than this app.
+        adminSupporters().catch((e) => ((rulesOutdated ||= e?.code === "permission-denied"), {})),
+        adminAudit().catch((e) => ((rulesOutdated ||= e?.code === "permission-denied"), [])),
       ]);
       setBans(b);
       setSupporters(s);
       setAudit(a);
+      if (rulesOutdated)
+        notify("Supporters and the audit log are blocked by the published Firestore rules. Publish the new firestore.rules.");
       setNow(Date.now());
       setUsers(u);
       setTickets(t);

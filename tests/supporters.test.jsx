@@ -235,6 +235,26 @@ describe("admin: supporters", () => {
   });
 });
 
+describe("admin: rules not published yet", () => {
+  it("says so instead of showing empty supporter and audit lists", async () => {
+    const denied = Object.assign(new Error("Missing or insufficient permissions."), { code: "permission-denied" });
+    api.adminSupporters.mockRejectedValue(denied);
+    api.adminAudit.mockRejectedValue(denied);
+    const notify = vi.fn();
+    render(<AdminPage active notify={notify} />);
+    expect(await screen.findByText("active now")).toBeVisible();
+    expect(notify).toHaveBeenCalledWith(
+      "Supporters and the audit log are blocked by the published Firestore rules. Publish the new firestore.rules.",
+    );
+  });
+  it("stays quiet when they load", async () => {
+    const notify = vi.fn();
+    render(<AdminPage active notify={notify} />);
+    expect(await screen.findByText("active now")).toBeVisible();
+    expect(notify).not.toHaveBeenCalled();
+  });
+});
+
 describe("admin: audit log", () => {
   it("lists every change newest first and filters by supporter, change and text", async () => {
     await openSection("Audit log");
