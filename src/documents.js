@@ -269,7 +269,7 @@ async function ocrPages(pdf, pages, indexes, onProgress) {
 
 /** pdf.js with its worker, loaded once and shared by every upload. */
 let pdfjsReady;
-function loadPdfjs() {
+export function loadPdfjs() {
   pdfjsReady ||= import("pdfjs-dist").then((pdfjs) => {
     if (typeof Worker !== "undefined") {
       // One shared worker that loads the Safari stream polyfill before pdf.js.

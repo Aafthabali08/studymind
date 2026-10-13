@@ -449,6 +449,7 @@ export default function App() {
         .map((n) => n.name)
         .join(" › "),
       kind: "University file",
+      uniNode: node, // for "View original"
     };
     setStudy((all) => ({ ...all, [doc.id]: { ...saved, ...all[doc.id] } }));
     window.scrollTo({ top: 0, behavior: "instant" });

@@ -125,7 +125,8 @@ it("lets a student pick their course, browse folders, filter by exam, search and
     expect.objectContaining({ id: "x1" }),
     [expect.objectContaining({ name: "DBMS" }), expect.objectContaining({ name: "Unit 2" }), expect.objectContaining({ name: "Normalization notes" })],
   );
-  expect(screen.getByRole("button", { name: "Open original Normalization notes" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "View Normalization notes" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Download Normalization notes" })).toBeVisible();
 
   // Search looks across every course, own course first.
   api.loadAllNodes.mockResolvedValue([
@@ -249,10 +250,10 @@ it("lets the admin drop files onto a folder, pick icons, and download Office ori
   expect(api.saveUniFile).toHaveBeenCalledWith(expect.objectContaining({ parentId: "f2" }));
   expect(screen.queryByText(/Drop to upload/)).toBeNull();
 
-  // PowerPoint can't open in a tab: its original downloads with its name.
-  await userEvent.click(screen.getByRole("button", { name: "Open original ER slides" }));
+  // Download saves the original with its own name.
+  await userEvent.click(screen.getByRole("button", { name: "Download ER slides" }));
   expect(documents.downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "ER slides.pptx");
-  expect(screen.getByRole("button", { name: "Open original ER slides" })).toHaveTextContent("Download original");
+  expect(screen.getByRole("button", { name: "View ER slides" })).toHaveTextContent("View");
 
   // At the top level there is no folder to drop into.
   await userEvent.click(within(screen.getByRole("navigation", { name: "Folder path" })).getByRole("button", { name: "Subjects" }));

@@ -18,7 +18,8 @@ import {
   ClipboardPaste,
   Copy,
   Scissors,
-  ExternalLink,
+  Download,
+  Eye,
   FileImage,
   FileQuestion,
   FileText,
@@ -71,7 +72,6 @@ import {
   indexFiles,
   visible as visibleIn,
   updateNode,
-  viewableInBrowser,
   copyNode,
   moveNode,
   transferCourse,
@@ -80,6 +80,7 @@ import {
 import { fileExtension } from "./logic";
 import { smartSearch } from "./uniSearch";
 import MaterialTransfer from "./MaterialTransfer";
+import DocumentViewer from "./DocumentViewer";
 
 const ALL_TTL = 5 * 60 * 1000; // the whole library is re-read at most every 5 minutes
 
@@ -509,6 +510,7 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
   const [clip, setClip] = useState(null); // { mode: "move" | "copy", node, from }
   const [pasting, setPasting] = useState("");
   const [moving, setMoving] = useState(false); // the Transfer materials panel
+  const [viewing, setViewing] = useState(null); // a file shown in the viewer
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
   const fileInput = useRef(null);
@@ -787,29 +789,15 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
       setOpening(null);
     }
   }
+  /** Downloads the original file with its own name. */
   async function openOriginal(node) {
-    // Word and PowerPoint files can't show in a tab: download them.
-    if (!viewableInBrowser(node.mime)) {
-      try {
-        downloadBlob(await loadOriginal(node), node.fileName || node.name);
-      } catch (e) {
-        notify(e.message || "Could not download the original file.");
-      }
-      return;
-    }
-    // Opened before the download finishes, so the browser allows the tab.
-    const tab = window.open("", "_blank");
     try {
-      const blob = await loadOriginal(node);
-      const url = URL.createObjectURL(blob);
-      if (tab) tab.location.href = url;
-      else downloadBlob(blob, node.fileName || `${node.name}.pdf`);
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      downloadBlob(await loadOriginal(node), node.fileName || node.name);
     } catch (e) {
-      tab?.close();
-      notify(e.message || "Could not open the original file.");
+      notify(e.message || "Could not download the original file.");
     }
   }
+
 
   const card = (node, extra) => {
     const isFile = node.kind === "file";
@@ -846,12 +834,19 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
           <ExamBadge exam={node.exam} />
           {opening === node.id ? <span className="fine">Opening…</span> : <ChevronRight size={16} aria-hidden="true" />}
         </button>
-        {(isFile && node.hasOriginal) || editable ? (
+        {isFile || editable ? (
           <div className="uni-card-actions">
-            {isFile && node.hasOriginal && (
-              <button className="text-button" onClick={() => openOriginal(node)} aria-label={`Open original ${node.name}`}>
-                <ExternalLink size={14} /> {viewableInBrowser(node.mime) ? "Original" : "Download original"}
-              </button>
+            {isFile && (
+              <>
+                <button className="text-button" onClick={() => setViewing(node)} aria-label={`View ${node.name}`}>
+                  <Eye size={14} /> View
+                </button>
+                {node.hasOriginal && (
+                  <button className="text-button" onClick={() => openOriginal(node)} aria-label={`Download ${node.name}`}>
+                    <Download size={14} /> Download
+                  </button>
+                )}
+              </>
             )}
             {editable && (
               <>
@@ -977,6 +972,8 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
           )}
         </div>
       </section>
+
+      {viewing && <DocumentViewer node={viewing} notify={notify} onClose={() => setViewing(null)} />}
 
       {admin && moving && (
         <section className="panel uni-options" aria-label="Transfer materials">

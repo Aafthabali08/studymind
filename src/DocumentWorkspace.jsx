@@ -33,6 +33,7 @@ import { extractKeywords } from "./ai/text";
 import Thinking from "./Thinking";
 import EditableName from "./EditableName";
 import QuestionPdfPanel from "./QuestionPdfPanel";
+import DocumentViewer from "./DocumentViewer";
 import FeedbackButtons from "./FeedbackButtons";
 import Markdown, { Lightbox } from "./Markdown";
 import {
@@ -113,7 +114,8 @@ export default function DocumentWorkspace({
     [importantOnly, setImportantOnly] = useState(false),
     [zoom, setZoom] = useState(null),
     [jobs, setJobs] = useState({}),
-    [exporting, setExporting] = useState(null); // "word" while exporting
+    [exporting, setExporting] = useState(null), // "word" while exporting
+    [viewingOriginal, setViewingOriginal] = useState(false);
   const images = doc.images || [];
   // Built in idle time after the document opens, so opening never stutters
   // (≈150 ms of work for a 200-page PDF).
@@ -379,6 +381,9 @@ export default function DocumentWorkspace({
   const body = lines.length > 1 ? lines.slice(1).join("\n") : text;
   return (
     <>
+      {viewingOriginal && doc.uniNode && (
+        <DocumentViewer node={doc.uniNode} notify={notify} onClose={() => setViewingOriginal(false)} />
+      )}
       <button className="text-button back" onClick={onBack}>
         <ChevronLeft size={16} />
         Back to library
@@ -404,6 +409,11 @@ export default function DocumentWorkspace({
               onClick={() => onDelete(doc)}
             >
               <Trash2 size={16} />
+            </button>
+          )}
+          {doc.uniNode && (
+            <button className="secondary" onClick={() => setViewingOriginal(true)}>
+              <Eye size={16} /> View original
             </button>
           )}
           <button

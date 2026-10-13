@@ -16,7 +16,7 @@ Visitors first see a **demo page**. Every feature (library, uploads, notes, ques
 - **Question bank**: 2, 5 and 8-mark questions with model answers and page references, generated after upload.
 - **Quiz**: 3 sets of 30 questions built only from your PDF, 5 of each format: multiple choice, fill in the blank, true/false, matching, name the term and "which statement is correct?". Score and per-format breakdown at the end, review of missed questions, **New questions** for fresh sets every time, and an optional **Gemini set** (checked against the document).
 - **Ask Gemini**: a floating help bot that reads the current screen, the open page (text and figures) or the whole document.
-- **University library**: pick university, degree and year (GITAM VIZAG · CSE CORE · Years 1–4 to start) and Regular / Supply. Browse subjects → folders (Unit 1, Unit 2, Important questions…) → files and open any file to study it: Ask document, notes, question bank, PDF/Word downloads and Ask Gemini on its pages. "Original" opens the uploaded PDF (files up to 15 MB). Each student's notes on a shared file are saved to their own account.
+- **University library**: pick university, degree and year (GITAM VIZAG · CSE CORE · Years 1–4 to start) and Regular / Supply. Browse subjects → folders (Unit 1, Unit 2, Important questions…) → files and open any file to study it: Ask document, notes, question bank, PDF/Word downloads and Ask Gemini on its pages. **View** opens the original inside StudyMind (PDF, images, text, Word with its formatting, PowerPoint slide by slide; on phones PDF pages are drawn so every page shows) with **Full screen**, **Open in new tab** (same toolbar there), **Download** and **Close**; **Download** saves the original (files up to 15 MB). A university file's study page also has **View original**. Each student's notes on a shared file are saved to their own account.
 - **Smart search** (University): searches every university, degree and year (or just your course), your own course first. Understands short forms (*dbms*, *os*, *cn*, *dsa*, *pyq*, *imp*), spelling slips (*normalisaton*), word forms (*normalize* → Normalization), unit numbers written any way (*unit-2*, *u2*, *unit II*), and topics inside files. When nothing matches every word, the closest topics are shown. Admin: *Search inside N older files* adds content keywords to files uploaded before this feature.
 - **Downloads**: notes, summaries, question banks (important / all, by category) and Interview Studio transcripts and reports as styled **PDF or Word** files.
 - **Study plan**: one plan across several PDFs, balanced by topic length over your days and hours, with revision days; optionally planned by Gemini.
@@ -62,7 +62,7 @@ firebase deploy --only firestore:rules
 ```sh
 npm install
 npm run dev     # http://127.0.0.1:5173
-npm test        # 249 tests
+npm test        # 256 tests
 npm run build
 npm run preview # production build at http://127.0.0.1:4173
 npm run deploy  # tests + build + Firebase Hosting + Firestore rules
