@@ -94,7 +94,7 @@ it("transfers (cuts) a subject to another year and it leaves this one", async ()
     "Transfer “DSA” and everything in it (2 folders, 1 file) to GITAM VIZAG · CSE CORE · Year 2 › the top level.",
   );
   await userEvent.click(within(dialog).getByRole("button", { name: /Transfer now/ }));
-  expect(api.moveNode).toHaveBeenCalledWith(expect.any(Array), "dsa", { scope: expect.objectContaining({ year: "2" }), parentId: null });
+  expect(api.moveNode).toHaveBeenCalledWith(expect.any(Array), "dsa", { scope: expect.objectContaining({ year: "2" }), parentId: null, parentName: "" });
   expect(notify).toHaveBeenCalledWith("Moved “DSA” to GITAM VIZAG · CSE CORE · Year 2 › the top level.");
   expect(screen.queryByRole("button", { name: "Open DSA" })).toBeNull();
   expect(screen.getByRole("button", { name: "Open OS" })).toBeVisible();
@@ -114,7 +114,7 @@ it("copies a folder into a subject of another year, and keeps the original", asy
   await within(dialog).findByRole("option", { name: "Algorithms" });
   await userEvent.selectOptions(within(dialog).getByLabelText("Put it in"), "Algorithms");
   await userEvent.click(within(dialog).getByRole("button", { name: /Copy now/ }));
-  expect(api.copyNode).toHaveBeenCalledWith(expect.any(Array), "u1", { scope: expect.objectContaining({ year: "2" }), parentId: "algo" }, expect.any(Function));
+  expect(api.copyNode).toHaveBeenCalledWith(expect.any(Array), "u1", { scope: expect.objectContaining({ year: "2" }), parentId: "algo", parentName: "Algorithms" }, expect.any(Function));
   expect(notify).toHaveBeenCalledWith("Copied “Unit 1” to GITAM VIZAG · CSE CORE · Year 2 › Algorithms.");
   expect(screen.getByRole("button", { name: "Open Unit 1" })).toBeVisible();
 });
@@ -177,7 +177,7 @@ describe("cut, copy and paste", () => {
     const bar2 = screen.getByRole("region", { name: "Clipboard" });
     expect(bar2).toHaveTextContent("from GITAM VIZAG · CSE CORE · Year 1 · paste into the top level of Year 2");
     await userEvent.click(within(bar2).getByRole("button", { name: /Paste here/ }));
-    expect(api.moveNode).toHaveBeenCalledWith(NODES, "dsa", { scope: expect.objectContaining({ year: "2" }), parentId: null });
+    expect(api.moveNode).toHaveBeenCalledWith(NODES, "dsa", { scope: expect.objectContaining({ year: "2" }), parentId: null, parentName: "" });
     expect(notify).toHaveBeenCalledWith("Moved “DSA” to GITAM VIZAG · CSE CORE · Year 2 › the top level.");
     expect(screen.getByRole("button", { name: "Open DSA" })).toBeVisible();
     expect(screen.queryByRole("region", { name: "Clipboard" })).toBeNull(); // a cut pastes once
@@ -196,7 +196,7 @@ describe("cut, copy and paste", () => {
     const bar = screen.getByRole("region", { name: "Clipboard" });
     expect(bar).toHaveTextContent("paste into “Algorithms”");
     await userEvent.click(within(bar).getByRole("button", { name: /Paste here/ }));
-    expect(api.copyNode).toHaveBeenLastCalledWith(NODES, "u1", { scope: expect.objectContaining({ year: "2" }), parentId: "algo" }, expect.any(Function));
+    expect(api.copyNode).toHaveBeenLastCalledWith(NODES, "u1", { scope: expect.objectContaining({ year: "2" }), parentId: "algo", parentName: "Algorithms" }, expect.any(Function));
     expect(await screen.findByRole("button", { name: "Open Unit 1" })).toBeVisible();
     // A copy stays on the clipboard: paste again.
     await userEvent.click(within(screen.getByRole("region", { name: "Clipboard" })).getByRole("button", { name: /Paste here/ }));

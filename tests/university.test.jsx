@@ -183,7 +183,7 @@ it("lets the admin add subjects and folders, upload files, rename, delete and ed
   );
   await userEvent.click(screen.getByRole("button", { name: "Open DBMS" }));
   await userEvent.click(screen.getByRole("button", { name: /Unit 1/ }));
-  expect(api.createNode).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "folder", name: "Unit 1", parentId: "n-DBMS" }));
+  expect(api.createNode).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "folder", name: "Unit 1", parentId: "n-DBMS", parentName: "DBMS" }));
   await userEvent.click(screen.getByRole("button", { name: "Open Unit 1" }));
 
   await userEvent.upload(
@@ -191,12 +191,16 @@ it("lets the admin add subjects and folders, upload files, rename, delete and ed
     new File(["%PDF"], "Unit 1 notes.pdf", { type: "application/pdf" }),
   );
   expect(await screen.findByRole("button", { name: "Open Unit 1 notes" })).toBeVisible();
-  expect(api.saveUniFile).toHaveBeenCalledWith(expect.objectContaining({ parentId: "n-Unit 1", pages: ["Unit 1 text", "More"] }));
+  expect(api.saveUniFile).toHaveBeenCalledWith(expect.objectContaining({ parentId: "n-Unit 1", parentName: "Unit 1", pages: ["Unit 1 text", "More"] }));
   expect(screen.getAllByText("2 pages").length).toBeGreaterThan(0); // card and upload status
 
   vi.spyOn(window, "prompt").mockReturnValue("Unit 1 – notes");
   await userEvent.click(screen.getByRole("button", { name: "Rename Unit 1 notes" }));
-  expect(api.updateNode).toHaveBeenCalledWith("file-1", { name: "Unit 1 – notes" });
+  expect(api.updateNode).toHaveBeenCalledWith(
+    "file-1",
+    { name: "Unit 1 – notes" },
+    expect.objectContaining({ action: "rename", summary: "Renamed file “Unit 1 notes” to “Unit 1 – notes”" }),
+  );
   vi.spyOn(window, "confirm").mockReturnValue(true);
   await userEvent.click(screen.getByRole("button", { name: "Delete Unit 1 – notes" }));
   expect(api.deleteNodes).toHaveBeenCalled();
@@ -231,11 +235,11 @@ it("lets the admin drop files onto a folder, pick icons, and download Office ori
   const picker = screen.getByRole("dialog", { name: "Icon for Unit 2" });
   expect(within(picker).getByRole("button", { name: "Units" })).toHaveClass("active");
   await userEvent.click(within(picker).getByRole("button", { name: "Database" }));
-  expect(api.updateNode).toHaveBeenLastCalledWith("f2", { icon: "database" });
+  expect(api.updateNode).toHaveBeenLastCalledWith("f2", { icon: "database" }, expect.objectContaining({ action: "icon" }));
   await userEvent.click(screen.getByRole("button", { name: "Change icon for Important questions" }));
   await userEvent.type(screen.getByLabelText("Or type an emoji"), "⭐");
   await userEvent.click(screen.getByRole("button", { name: "Use" }));
-  expect(api.updateNode).toHaveBeenLastCalledWith("fi", { icon: "⭐" });
+  expect(api.updateNode).toHaveBeenLastCalledWith("fi", { icon: "⭐" }, expect.objectContaining({ action: "icon", summary: "Set the icon of “Important questions” to ⭐" }));
   expect(screen.getByRole("button", { name: "Open Important questions" })).toHaveTextContent("⭐");
 
   // Drag and drop: Word, PowerPoint and images upload like PDFs.

@@ -96,7 +96,7 @@ function Tree({ nodes, render, open, setOpen, parentId = null, depth = 0, filesT
 }
 
 /**
- * Admin tool: pick a course and the subjects, units, folders and files to
+ * Admin and supporter tool: pick a course and the subjects, units, folders and files to
  * move; choose Transfer (cut and paste) or Copy (copy and paste); pick the
  * course and the subject or folder to put them in; paste.
  */
@@ -201,8 +201,9 @@ export default function MaterialTransfer({ notify, initialFrom, onChanged }) {
       let done = 0;
       for (const n of items) {
         setBusy(`${mode === "move" ? "Transferring" : "Copying"} ${++done} of ${items.length}…`);
-        if (mode === "move") await moveNode(source, n.id, { scope: to, parentId: dest });
-        else await copyNode(source, n.id, { scope: to, parentId: dest });
+        const place = { scope: to, parentId: dest, parentName: dest ? destName : "" };
+        if (mode === "move") await moveNode(source, n.id, place);
+        else await copyNode(source, n.id, place);
       }
       notify(`${mode === "move" ? "Transferred" : "Copied"} ${plural(items.length, "item")} to ${where}.`);
       setPicked(new Set());
@@ -210,7 +211,11 @@ export default function MaterialTransfer({ notify, initialFrom, onChanged }) {
       load(to, setTarget);
       onChanged?.();
     } catch (e) {
-      notify(e.message || "The transfer stopped. Check what moved and try again.");
+      notify(
+        e?.code === "permission-denied"
+          ? "You don't have permission to change the library. Ask the admin if you should be a supporter."
+          : e.message || "The transfer stopped. Check what moved and try again.",
+      );
       load(from, setSource);
       load(to, setTarget);
     } finally {

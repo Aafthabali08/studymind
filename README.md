@@ -31,9 +31,11 @@ Everything runs on the free Firebase **Spark** plan and the free Gemini API tier
 - **Admin dashboard** (only for `aafthabali08@gmail.com`, signed in with a verified email or Google): open it from the avatar menu.
   - **Overview:** users, active now, active this week, blocked or suspended, documents, open tickets, AI accuracy from feedback, feedback per feature.
   - **Users:** search by email; status (**Active now** = used the app in the last 5 minutes, Offline, Blocked, Suspended until …), documents, tickets, joined and last active. Filter by *Active now* or *Blocked & suspended*.
-  - **Block or suspend a user:** open the user → Access. **Suspend** for 1 hour, 1 day, 3 days, 1 week or 30 days (it ends by itself), or **Block** until you unblock them, with an optional reason the user sees. Enforced by the Firestore rules: a blocked or suspended account can't read or save any data, and the app shows them a locked screen. The admin account can't be blocked.
+  - **Block or suspend a user:** open the user → Access. **Suspend** for 1 hour, 1 day, 3 days, 1 week or 30 days (it ends by itself), or **Block** until you unblock them, with an optional reason the user sees. Enforced by the Firestore rules: a blocked or suspended account can't read or save any data, and the app shows them a locked screen. The locked screen has one action besides *Log out*: **Contact admin**, which raises a one-message ticket (marked **Appeal** in Tickets, with *Manage their access*). They can't read replies until access is back; when it is, the app reloads by itself. The admin account can't be blocked.
   - **University library:** on the University page, add subjects, folders (one-tap Unit 1–5, Important questions, Previous papers, Notes, Lab) and upload files into them with **Upload files** or by **dragging and dropping** onto the folder (PDF, Word, PowerPoint, images, TXT, Markdown, CSV); give each subject or folder its own **icon** (30 built-in or any emoji); tag each as Regular, Supply or both; rename and delete (a folder with everything in it). **Edit options** adds or removes universities, degrees and years (Years 1–5 by default).
-  - **Transfer materials** (Admin dashboard → Transfer materials, or the University page's *Transfer materials* button; admin only): 1 · **From**: pick university, degree and year, then tick the subjects, units, folders and files (or *Select everything*); 2 · **How**: *Transfer* (cut and paste) or *Copy* (copy and paste); 3 · **To**: pick university, degree and year, then the subject or folder (or the top level); press *Transfer here* / *Paste copies here*.
+  - **Supporters:** registered users you trust to help with the University library. Admin dashboard → Supporters → find a user by email → **Make supporter** (or from a user's page → *Supporter role*). A supporter adds subjects and folders, uploads, renames, changes exam tags and icons, and uses every transfer tool (cut / copy / paste, ⇄, Transfer materials, move or swap a year). They can't delete, edit the course options or open the admin dashboard. Each supporter's page shows their status, changes and **Access** (suspend, block, lift) and *Remove supporter*. They get a 🔔 notification when added or removed.
+  - **Audit log:** every change a supporter makes (added, uploaded, renamed, changed exam or icon, transferred, copied, moved or swapped a year), with who, when, the course and the items, newest first; filter by supporter and change, and search. The Firestore rules accept a supporter's change only when its log entry is written in the same batch at the same moment, so it can't be skipped or edited, and only the admin can read it.
+  - **Transfer materials** (Admin dashboard → Transfer materials, or the University page's *Transfer materials* button; admin and supporters): 1 · **From**: pick university, degree and year, then tick the subjects, units, folders and files (or *Select everything*); 2 · **How**: *Transfer* (cut and paste) or *Copy* (copy and paste); 3 · **To**: pick university, degree and year, then the subject or folder (or the top level); press *Transfer here* / *Paste copies here*.
   - **Cut, copy and paste:** every subject, folder and file card has **Cut** (transfer) and **Copy**. A clipboard bar then follows you to any university, degree, year and folder; **Paste here** puts it where you are (top level or the open folder). A cut pastes once; a copy can be pasted many times.
   - **Transfer or copy:** the ⇄ button on any subject, folder or file moves it (*Transfer* = cut and paste) or duplicates it (*Copy* = copy and paste) with everything inside to another university, degree or year, at the top level or into a subject or folder there. **Transfer this year** moves, copies or **swaps** a whole course with another year, degree or university.
   - **Tickets:** read the complaint, reply, set the status (Open, In progress, Resolved, Closed). The user gets a 🔔 notification.
@@ -66,7 +68,7 @@ npm test        # 256 tests
 npm run build
 npm run preview # production build at http://127.0.0.1:4173
 npm run deploy  # tests + build + Firebase Hosting + Firestore rules
-npm run test:rules  # 70 security-rule checks on local emulators (needs Java)
+npm run test:rules  # 119 security-rule checks on local emulators (needs Java)
 ```
 
 ### Test everything locally (no real accounts)
@@ -117,6 +119,8 @@ Optional hosting: `npm run build && firebase deploy --only hosting`.
 | University subjects, folders and files (text, figures, original) | `uniNodes/{id}` and its sub-collections   |
 | Each user's notes on a university file                           | `users/{uid}/uniStudy/{id}`               |
 | Blocks and suspensions                                           | `bans/{uid}`                              |
+| Supporters (who may manage the University library)               | `supporters/{uid}`                        |
+| What supporters changed (admin-only audit log)                   | `audit/{id}`                              |
 
 Firestore uses an offline cache, so your library opens instantly and works without a connection.
 

@@ -10,6 +10,8 @@
 //   tickets/{id}/attachments/{id}    optional pictures (compressed, ≤ ~450 KB)
 //   app/guidance                     admin rules added to every Gemini prompt
 //   bans/{uid}                       admin block / timed suspension of a user
+//   supporters/{uid}                 users the admin lets manage the library
+//   audit/{id}                       what supporters changed in the library
 import { firebase } from "./firebase";
 
 export const ADMIN_EMAILS = ["aafthabali08@gmail.com"];
@@ -168,6 +170,57 @@ export async function unbanUser(uid) {
   await f.deleteDoc(f.doc(db, "bans", uid));
 }
 
+// ---- Supporters (admin) ------------------------------------------------------------
+// A supporter manages the university library like the admin (add, upload,
+// edit, transfer, copy and paste) but can't delete, edit the course options
+// or open the admin page. Each change they make is in the audit log.
+/** True when this user is a supporter. */
+export async function loadSupporter(uid) {
+  const { db, f } = await fs();
+  const snap = await f.getDoc(f.doc(db, "supporters", uid));
+  return snap.exists();
+}
+/** Every supporter, by uid (admin). */
+export async function adminSupporters() {
+  const { db, f } = await fs();
+  const snap = await f.getDocs(f.collection(db, "supporters"));
+  return Object.fromEntries(snap.docs.map((d) => [d.id, { ...d.data(), addedAt: toDate(d.data().addedAt) }]));
+}
+/** Makes a registered user a supporter and tells them. */
+export async function addSupporter(user) {
+  if (ADMIN_EMAILS.includes(String(user.email || "").toLowerCase()))
+    throw new Error("The admin account already has every permission.");
+  const { db, f } = await fs();
+  const supporter = { uid: user.id, email: user.email || "", name: clip(user.name, 120) };
+  await f.setDoc(f.doc(db, "supporters", user.id), { ...supporter, addedAt: f.serverTimestamp() });
+  await notifyUser(user.id, {
+    title: "You're now a StudyMind supporter",
+    body: "You can add subjects, folders and files to the University library, upload, edit, transfer, copy and paste. Your changes are recorded for the admin.",
+  }).catch(() => {});
+  return { ...supporter, addedAt: new Date() };
+}
+/** Takes the supporter role away (their past changes stay in the log). */
+export async function removeSupporter(user) {
+  const { db, f } = await fs();
+  await f.deleteDoc(f.doc(db, "supporters", user.id));
+  await notifyUser(user.id, {
+    title: "Your supporter access has ended",
+    body: "You can still use StudyMind and the University library as a student.",
+  }).catch(() => {});
+}
+/** The audit log, newest first: every supporter, or one (admin). */
+export async function adminAudit({ uid = "" } = {}) {
+  const { db, f } = await fs();
+  const col = f.collection(db, "audit");
+  // One supporter: a single-field query (no composite index), sorted here.
+  const snap = await f.getDocs(
+    uid ? f.query(col, f.where("uid", "==", uid)) : f.query(col, f.orderBy("at", "desc"), f.limit(500)),
+  );
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data(), at: toDate(d.data().at) }))
+    .sort((a, b) => (b.at || 0) - (a.at || 0));
+}
+
 // ---- Feedback & learning -------------------------------------------------------
 /**
  * Records ✓/✗ feedback. It is saved for the admin, and "wrong" items become
@@ -283,6 +336,32 @@ export async function createTicket(
       updatedAt: f.serverTimestamp(),
     });
   }
+  return ref.id;
+}
+/**
+ * "Contact admin" from the blocked / suspended screen: one message, no
+ * pictures; the user can't read it back until the admin restores access.
+ */
+export async function appealTicket(user, ban, message) {
+  const text = clip(String(message || "").trim(), 3000);
+  if (!text) throw new Error("Write a message for the admin.");
+  const { db, f } = await fs();
+  const ref = f.doc(f.collection(db, "tickets"));
+  await f.setDoc(ref, {
+    uid: user.uid,
+    email: user.email || "",
+    name: user.displayName || "",
+    subject: ban?.kind === "blocked" ? "Blocked account: please review" : "Suspended account: please review",
+    category: "Account or sign-in",
+    appeal: true,
+    banKind: ban?.kind || "",
+    status: "open",
+    messages: [{ from: "user", text, at: new Date().toISOString(), attachments: [] }],
+    unreadForAdmin: true,
+    unreadForUser: false,
+    createdAt: f.serverTimestamp(),
+    updatedAt: f.serverTimestamp(),
+  });
   return ref.id;
 }
 export async function replyToTicket(ticket, from, text, images = []) {

@@ -6472,3 +6472,214 @@ button.local-label {
     line-height: 1.5;
   }
 }
+
+/* ---- Lock screen: Contact admin ---- */
+.ban-screen {
+  overflow-y: auto;
+}
+.ban-card .primary {
+  margin-top: 0;
+}
+.ban-actions {
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+.ban-contact {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+.ban-contact label {
+  font-weight: 600;
+  font-size: 14px;
+}
+.ban-contact textarea {
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+}
+.ban-contact .button-row {
+  flex-wrap: wrap;
+}
+.ban-error {
+  color: var(--band-red);
+  margin: 0;
+}
+.ban-sent {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--soft);
+  border-left: 3px solid #22c55e;
+}
+.ban-sent svg {
+  flex: none;
+  margin-top: 2px;
+  color: #22c55e;
+}
+@media (max-width: 540px) {
+  .ban-card {
+    padding: 22px 18px;
+  }
+  .ban-actions button,
+  .ban-contact .button-row button {
+    flex: 1 1 140px;
+  }
+}
+
+/* ---- Admin: supporters and audit log ---- */
+.role-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--soft);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.role-badge.appeal {
+  margin: 0 6px 0 0;
+  color: var(--band-red);
+  border-color: color-mix(in srgb, var(--band-red) 45%, var(--line));
+}
+.access-actions {
+  flex-wrap: wrap;
+}
+.supporter-add {
+  margin: 8px 0 18px;
+}
+.supporter-add h3 {
+  margin: 0 0 8px;
+}
+.supporter-matches {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.supporter-matches > li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  min-width: 0;
+}
+.supporter-matches > li > span {
+  display: grid;
+  min-width: 0;
+}
+.supporter-matches small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.appeal-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--band-red);
+  border-radius: 8px;
+  background: var(--soft);
+}
+.appeal-note p {
+  margin: 0;
+  flex: 1 1 240px;
+}
+.audit-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  align-items: end;
+  margin: 12px 0 6px;
+}
+.audit-filters > label:not(.search) {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  min-width: 0;
+}
+.audit-filters .admin-search {
+  margin: 0;
+}
+.audit-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.audit-list > li {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  min-width: 0;
+}
+.audit-list p {
+  margin: 6px 0 4px;
+  overflow-wrap: anywhere;
+}
+.audit-list small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.audit-list details {
+  margin-top: 6px;
+  font-size: 13px;
+}
+.audit-list details ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.audit-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.audit-head time {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+.audit-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  background: var(--soft);
+  border: 1px solid var(--line);
+}
+.audit-chip.move,
+.audit-chip.move-course,
+.audit-chip.swap-course {
+  border-color: color-mix(in srgb, #f59e0b 55%, var(--line));
+}
+.audit-chip.add,
+.audit-chip.upload,
+.audit-chip.copy {
+  border-color: color-mix(in srgb, #22c55e 55%, var(--line));
+}
+.uni-role-note {
+  margin: 0 0 10px;
+}
+@media (max-width: 540px) {
+  .audit-head time {
+    margin-left: 0;
+    width: 100%;
+  }
+}

@@ -310,7 +310,7 @@ it("runs a full 5–7 question deep dive, then resumes the main questions automa
   expect(screen.getByText("QUESTION 2 OF 3 · FOLLOW-UP 1 OF 7")).toBeVisible();
   expect(screen.getByText(/Follow-up on “Docker”/)).toBeVisible();
   random.mockRestore();
-});
+}, 20_000); // a long scripted flow: slow when the whole suite runs in parallel
 it("lets the user choose how many questions to be asked", async () => {
   render(<InterviewStudio active notify={vi.fn()} />);
   const input = screen.getByLabelText("Number of questions");

@@ -21,6 +21,12 @@ service cloud.firestore {
     function allowed() {
       return signedIn() && !banned();
     }
+    // A supporter the admin picked (supporters/{uid}); blocked or suspended
+    // supporters lose it too.
+    function isSupporter() {
+      return allowed()
+        && exists(/databases/$(database)/documents/supporters/$(request.auth.uid));
+    }
     function isOwner(uid) {
       return allowed() && request.auth.uid == uid;
     }
@@ -58,11 +64,21 @@ service cloud.firestore {
     }
 
     // Complaint box. Users create and read their own tickets and can add
-    // messages; only the admin changes the status.
+    // messages; only the admin changes the status. A blocked or suspended
+    // user can only raise one-message appeal tickets ("Contact admin"), and
+    // can't read or add to them.
     match /tickets/{id} {
-      allow create: if allowed()
+      allow create: if signedIn()
         && request.resource.data.uid == request.auth.uid
-        && request.resource.data.status == "open";
+        && request.resource.data.status == "open"
+        && (!banned()
+            || (request.resource.data.appeal == true
+                && request.resource.data.subject is string
+                && request.resource.data.subject.size() <= 140
+                && request.resource.data.messages is list
+                && request.resource.data.messages.size() == 1
+                && request.resource.data.messages[0].text is string
+                && request.resource.data.messages[0].text.size() <= 3000));
       allow read: if isAdmin() || (allowed() && resource.data.uid == request.auth.uid);
       allow update: if isAdmin()
         || (allowed() && resource.data.uid == request.auth.uid
@@ -101,30 +117,69 @@ service cloud.firestore {
 
     // University library: the admin's university / degree / year options and
     // the shared subjects, folders and files (with their text, figures and
-    // original). Every signed-in user can read; only the admin can change.
+    // original). Every signed-in user can read. The admin changes anything;
+    // a supporter adds, uploads, edits, transfers and copies (never deletes),
+    // and each of their changes must be written together with its audit
+    // entry (same batch, so `at` is this request's time).
     // Each user's own notes for a file live under users/{uid}/uniStudy.
     match /uni/{doc} {
       allow read: if allowed();
       allow write: if isAdmin();
     }
     match /uniNodes/{id} {
+      function validNode() {
+        return request.resource.data.kind in ["subject", "folder", "file"]
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.name.size() <= 120
+          && request.resource.data.exam in ["both", "regular", "supply"]
+          // Optional icon: a built-in icon name or an emoji.
+          && (!("icon" in request.resource.data) || request.resource.data.icon == null
+              || (request.resource.data.icon is string && request.resource.data.icon.size() <= 24));
+      }
+      function auditedBySupporter() {
+        let entry = /databases/$(database)/documents/audit/$(request.resource.data.audit);
+        return isSupporter()
+          && request.resource.data.by == request.auth.uid
+          && request.resource.data.audit is string
+          && getAfter(entry).data.uid == request.auth.uid
+          && getAfter(entry).data.at == request.time;
+      }
       allow read: if allowed();
-      allow write: if isAdmin()
-        && request.resource.data.kind in ["subject", "folder", "file"]
-        && request.resource.data.name is string
-        && request.resource.data.name.size() > 0
-        && request.resource.data.name.size() <= 120
-        && request.resource.data.exam in ["both", "regular", "supply"]
-        // Optional icon: a built-in icon name or an emoji.
-        && (!("icon" in request.resource.data) || request.resource.data.icon == null
-            || (request.resource.data.icon is string && request.resource.data.icon.size() <= 24));
+      allow create, update: if validNode() && (isAdmin() || auditedBySupporter());
       allow delete: if isAdmin();
       // A file's parts, images and original chunks (one level below the
       // node; "{sub=**}" would also match the node itself and skip its checks).
+      // A supporter writes them only for a new file, before its node exists.
       match /{collection}/{part} {
         allow read: if allowed();
         allow write: if isAdmin();
+        allow create: if isSupporter()
+          && collection in ["parts", "images", "blobs"]
+          && !exists(/databases/$(database)/documents/uniNodes/$(id));
       }
+    }
+
+    // Supporters: the admin adds and removes them; a user can see their own.
+    match /supporters/{uid} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow create, update: if isAdmin() && request.resource.data.uid == uid;
+      allow delete: if isAdmin();
+    }
+
+    // Audit log of supporters' library changes: written by the supporter with
+    // the change itself, read only by the admin, never edited.
+    match /audit/{id} {
+      allow create: if isSupporter()
+        && request.resource.data.keys().hasOnly(["uid", "email", "name", "action", "summary", "course", "items", "count", "at"])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.at == request.time
+        && request.resource.data.action is string
+        && request.resource.data.summary is string
+        && request.resource.data.summary.size() <= 1000
+        && request.resource.data.items is list
+        && request.resource.data.items.size() <= 50;
+      allow read, delete: if isAdmin();
     }
   }
 }

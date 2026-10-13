@@ -49,6 +49,7 @@ import {
   ensureProfile,
   heartbeat,
   loadBan,
+  loadSupporter,
   banState,
   HEARTBEAT_MS,
   exportMyData,
@@ -61,6 +62,7 @@ import {
   setDocCount,
 } from "./support";
 import Landing from "./Landing";
+import BanScreen from "./BanScreen";
 import EditableName from "./EditableName";
 import { useAuth } from "./auth";
 import { serverVerified, updateSettings, useAI } from "./ai/engine";
@@ -99,6 +101,8 @@ const AuthPanel = lazy(pages.AuthPanel);
 const AISettings = lazy(pages.AISettings);
 const HelpBot = lazy(pages.HelpBot);
 const UniversityPage = lazy(pages.UniversityPage);
+// How long after a suspension ends the app unlocks (device clocks drift).
+const UNLOCK_GRACE_MS = 10_000;
 function preloadPages() {
   const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 600));
   idle(() => {
@@ -146,7 +150,9 @@ export default function App() {
     [deleting, setDeleting] = useState({ typed: "", step: "", error: "" }),
     [docToDelete, setDocToDelete] = useState(null),
     // Set by the admin (bans/{uid}): { kind: "blocked" | "suspended", until, reason }.
-    [ban, setBan] = useState(null);
+    [ban, setBan] = useState(null),
+    // Set by the admin (supporters/{uid}): manages the University library.
+    [supporter, setSupporter] = useState(false);
   const banCheck = useRef(Promise.resolve(null));
   const admin = isAdminUser(user);
   const unread = notifications.filter((n) => !n.read).length;
@@ -242,13 +248,22 @@ export default function App() {
   // "Active now" for the admin, and a block or suspension applied (or ended)
   // while the app is open: refreshed every few minutes while it is visible.
   useEffect(() => {
+    setSupporter(false);
     if (!user) return setBan(null);
+    const role = () =>
+      admin
+        ? setSupporter(false)
+        : loadSupporter(user.uid)
+            .then(setSupporter)
+            .catch(() => {});
+    role();
     const tick = () => {
       if (document.visibilityState === "hidden") return;
       heartbeat(user.uid).catch(() => {});
       loadBan(user.uid)
         .then((b) => setBan(banState(b)))
         .catch(() => {});
+      role();
     };
     const id = setInterval(tick, HEARTBEAT_MS);
     document.addEventListener("visibilitychange", tick);
@@ -257,17 +272,30 @@ export default function App() {
       document.removeEventListener("visibilitychange", tick);
     };
   }, [user?.uid]);
-  // A suspension ends by itself: unlock at that moment.
+  // A suspension ends by itself: unlock at that moment (a few seconds after,
+  // so a device clock a little ahead of the server's doesn't unlock early).
   useEffect(() => {
     if (!ban?.until) return;
-    const ms = ban.until.getTime() - Date.now();
+    const ms = ban.until.getTime() + UNLOCK_GRACE_MS - Date.now();
     // Long suspensions outlast one timer: check again when it fires.
     const id = setTimeout(
-      () => setBan((b) => (b?.until && b.until.getTime() <= Date.now() ? null : b && { ...b })),
+      () => setBan((b) => (b?.until && b.until.getTime() + UNLOCK_GRACE_MS <= Date.now() ? null : b && { ...b })),
       Math.min(Math.max(ms, 0), 2 ** 31 - 1),
     );
     return () => clearTimeout(id);
   }, [ban]);
+  // Access is back (the suspension ended or the admin lifted it): reload, so
+  // the library, notifications and the database connection start fresh
+  // (everything read while locked was refused).
+  const lockedUid = useRef(null);
+  useEffect(() => {
+    if (!user) lockedUid.current = null;
+    else if (ban) lockedUid.current = user.uid;
+    else if (lockedUid.current === user.uid) {
+      lockedUid.current = null;
+      window.location.reload();
+    }
+  }, [ban, user?.uid]);
 
   // Admin replies arrive as notifications; check every 2 minutes and on focus.
   function refreshNotifications() {
@@ -1322,6 +1350,8 @@ export default function App() {
                 <UniversityPage
                   active={!selected && view === "University"}
                   admin={admin}
+                  supporter={supporter}
+                  user={user}
                   notify={setNotice}
                   onOpenFile={openUniFile}
                 />
@@ -1381,33 +1411,7 @@ export default function App() {
           </Suspense>
         )}
       </div>
-      {user && ban && (
-        <div className="ban-screen" role="alertdialog" aria-modal="true" aria-labelledby="ban-title">
-          <section className="panel ban-card">
-            <span className="eyebrow">STUDYMIND</span>
-            <h1 id="ban-title">
-              {ban.kind === "blocked" ? "Your account is blocked." : "Your account is suspended."}
-            </h1>
-            <p>
-              {ban.kind === "blocked"
-                ? "The StudyMind admin has blocked this account, so it can't be used."
-                : `You can use StudyMind again on ${new Intl.DateTimeFormat("en", {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  }).format(ban.until)}.`}
-            </p>
-            {ban.reason && (
-              <p className="ban-reason">
-                <strong>Reason:</strong> {ban.reason}
-              </p>
-            )}
-            <p className="fine">Signed in as {user.email}. If you think this is a mistake, contact the admin.</p>
-            <button className="primary" onClick={logOut}>
-              <LogOut size={16} /> Log out
-            </button>
-          </section>
-        </div>
-      )}
+      {user && ban && <BanScreen user={user} ban={ban} onLogOut={logOut} />}
       <input
         ref={fileRef}
         type="file"

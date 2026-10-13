@@ -1,13 +1,15 @@
 // University library: shared study material the admin organises per
 // university, degree and year (subjects → folders such as "Unit 1" or
-// "Important questions" → files). Every signed-in user can read it; only the
-// admin can change it (firestore.rules). Layout:
+// "Important questions" → files). Every signed-in user can read it; the admin
+// and the supporters the admin picks can change it, and only the admin can
+// delete (firestore.rules). Layout:
 //   uni/options                       universities, degrees, years (admin-edited)
 //   uniNodes/{id}                     subject | folder | file, with its scope
 //   uniNodes/{id}/parts/{n}           a file's extracted page text
 //   uniNodes/{id}/images/{id}         a file's figures (JPEG, < 700 KB each)
 //   uniNodes/{id}/blobs/{n}           the original file, base64 in < 1 MB chunks
 //   users/{uid}/uniStudy/{id}         each user's own notes / question bank
+//   audit/{id}                        what a supporter changed (admin reads)
 import { firebase } from "./firebase";
 import { baseName, fileExtension } from "./logic";
 import { fileKeywords } from "./uniSearch";
@@ -157,6 +159,60 @@ function partition(pages) {
   return parts;
 }
 
+// ---- Who is changing the library ---------------------------------------------------
+// The admin, or a supporter (supporters/{uid}). A supporter's change is
+// committed in one batch with an audit/{id} entry describing it; the rules
+// refuse a supporter's change without its entry, so the log can't be skipped.
+let actor = null; // { uid, email, name, supporter }
+export function setLibraryActor(next) {
+  actor = next && next.uid ? { ...next } : null;
+}
+export const libraryActor = () => actor;
+export const AUDIT_ACTIONS = {
+  add: "Added",
+  upload: "Uploaded",
+  rename: "Renamed",
+  exam: "Changed exam",
+  icon: "Changed icon",
+  edit: "Edited",
+  move: "Transferred",
+  copy: "Copied",
+  "move-course": "Moved a year",
+  "swap-course": "Swapped years",
+};
+const clipText = (t, n) => String(t ?? "").slice(0, n);
+export const courseText = (s) => `${s.university} · ${s.degree} · Year ${s.year}`;
+
+/** The audit entry for a change (pure; `at` is added when it is written). */
+export function auditEntry(who, { action, summary, course = "", items = [] }) {
+  return {
+    uid: who.uid,
+    email: clipText(who.email, 200),
+    name: clipText(who.name, 120),
+    action: AUDIT_ACTIONS[action] ? action : "edit",
+    summary: clipText(summary, 1000),
+    course: clipText(course, 300),
+    items: items.slice(0, 50).map((n) => ({ id: n.id, name: clipText(n.name, 120), kind: n.kind })),
+    count: items.length,
+  };
+}
+
+/**
+ * Adds the audit entry to `batch` when a supporter is making the change, and
+ * returns the fields the changed nodes carry: who changed them last (`by`)
+ * and, for a supporter, the entry (`audit`).
+ */
+function stamp(f, db, batch, change) {
+  if (!actor) return {};
+  if (!actor.supporter) return { by: actor.uid };
+  const ref = f.doc(f.collection(db, "audit"));
+  batch.set(ref, { ...auditEntry(actor, change), at: f.serverTimestamp() });
+  return { by: actor.uid, audit: ref.id };
+}
+function adminOnly(what) {
+  if (actor?.supporter) throw new Error(`Only the admin can ${what}.`);
+}
+
 // ---- Options -----------------------------------------------------------------------
 export async function loadUniOptions() {
   const { db, fns } = await firebase();
@@ -170,6 +226,7 @@ export async function loadUniOptions() {
   };
 }
 export async function saveUniOptions(options) {
+  adminOnly("edit the university, degree and year options");
   const { db, fns } = await firebase();
   const f = fns.firestore;
   await f.setDoc(f.doc(db, "uni", "options"), {
@@ -236,7 +293,7 @@ export async function indexFiles(nodes, onProgress) {
   for (const n of todo) {
     const { pages } = await loadUniFile(n.id);
     const keywords = fileKeywords(pages, extractKeywords);
-    await updateNode(n.id, { keywords });
+    await updateNode(n.id, { keywords }, { action: "edit", summary: `Made “${n.name}” searchable by its content`, course: courseText(n), items: [n] });
     n.keywords = keywords;
     onProgress?.(++done, todo.length);
   }
@@ -244,7 +301,7 @@ export async function indexFiles(nodes, onProgress) {
 }
 
 /** A subject (parentId null) or a folder inside a subject or folder. */
-export async function createNode({ scope, parentId = null, kind, name, exam = "both" }) {
+export async function createNode({ scope, parentId = null, parentName = "", kind, name, exam = "both" }) {
   const { db, fns } = await firebase();
   const f = fns.firestore;
   const ref = f.doc(f.collection(db, "uniNodes"));
@@ -257,14 +314,31 @@ export async function createNode({ scope, parentId = null, kind, name, exam = "b
     degree: scope.degree,
     year: String(scope.year),
   };
-  await f.setDoc(ref, { ...node, createdAt: f.serverTimestamp() });
+  const batch = f.writeBatch(db);
+  const by = stamp(f, db, batch, {
+    action: "add",
+    summary: `Added ${kind} “${node.name}”${parentName ? ` in “${parentName}”` : ""}`,
+    course: courseText(scope),
+    items: [{ id: ref.id, ...node }],
+  });
+  batch.set(ref, { ...node, ...by, createdAt: f.serverTimestamp() });
+  await batch.commit();
   return { id: ref.id, ...node };
 }
 
-export async function updateNode(id, patch) {
+/** Changes a node's fields; `change` describes it for the audit log. */
+export async function updateNode(id, patch, change = {}) {
   const { db, fns } = await firebase();
   const f = fns.firestore;
-  await f.updateDoc(f.doc(db, "uniNodes", id), patch);
+  const batch = f.writeBatch(db);
+  const by = stamp(f, db, batch, {
+    action: change.action || "edit",
+    summary: change.summary || `Edited ${Object.keys(patch).join(", ")}`,
+    course: change.course || "",
+    items: change.items || [{ id, name: patch.name || "", kind: "" }],
+  });
+  batch.update(f.doc(db, "uniNodes", id), { ...patch, ...by });
+  await batch.commit();
 }
 
 const toBase64 = async (file) => {
@@ -279,7 +353,7 @@ const toBase64 = async (file) => {
  * Saves an uploaded file: its page text and figures (for reading and for
  * Gemini) and, when small enough, the original for "Open original".
  */
-export async function saveUniFile({ scope, parentId, exam = "both", file, pages, images = [] }) {
+export async function saveUniFile({ scope, parentId, parentName = "", exam = "both", file, pages, images = [] }) {
   const { db, fns } = await firebase();
   const f = fns.firestore;
   const ref = f.doc(f.collection(db, "uniNodes"));
@@ -326,7 +400,15 @@ export async function saveUniFile({ scope, parentId, exam = "both", file, pages,
     writes.slice(i, i + 6).forEach(([r, data]) => batch.set(r, data));
     await batch.commit();
   }
-  await f.setDoc(ref, { ...node, createdAt: f.serverTimestamp() });
+  const batch = f.writeBatch(db);
+  const by = stamp(f, db, batch, {
+    action: "upload",
+    summary: `Uploaded “${file.name}” (${pages.length} page${pages.length === 1 ? "" : "s"})${parentName ? ` to “${parentName}”` : ""}`,
+    course: courseText(scope),
+    items: [{ id: ref.id, ...node }],
+  });
+  batch.set(ref, { ...node, ...by, createdAt: f.serverTimestamp() });
+  await batch.commit();
   return { id: ref.id, ...node, hasOriginal: chunks.length > 0 };
 }
 
@@ -360,6 +442,7 @@ export async function loadOriginal(node) {
 
 /** Deletes a node with everything inside it (folders, files and their data). */
 export async function deleteNodes(nodes, id) {
+  adminOnly("delete from the library");
   const { db, fns } = await firebase();
   const f = fns.firestore;
   const all = descendants(nodes, id);
@@ -455,22 +538,53 @@ export function planCopy(nodes, id, { scope, parentId = null }, newId) {
   }));
 }
 
-async function commitUpdates(updates) {
+const BATCH_NODES = 400; // + one audit entry, under Firestore's 500 writes
+const partOf = (i, total) => (total > BATCH_NODES ? ` (part ${i / BATCH_NODES + 1} of ${Math.ceil(total / BATCH_NODES)})` : "");
+
+/** Applies updates in batches; each batch carries its own audit entry. */
+async function commitUpdates(updates, change, nodes = []) {
   const { db, fns } = await firebase();
   const f = fns.firestore;
-  for (let i = 0; i < updates.length; i += 400) {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  for (let i = 0; i < updates.length; i += BATCH_NODES) {
+    const slice = updates.slice(i, i + BATCH_NODES);
     const batch = f.writeBatch(db);
-    updates.slice(i, i + 400).forEach(({ id, patch }) => batch.update(f.doc(db, "uniNodes", id), patch));
+    const by = stamp(f, db, batch, {
+      ...change,
+      summary: change.summary + partOf(i, updates.length),
+      items: slice.map((u) => byId.get(u.id) || { id: u.id, name: "", kind: "" }),
+    });
+    slice.forEach(({ id, patch }) => batch.update(f.doc(db, "uniNodes", id), { ...patch, ...by }));
     await batch.commit();
   }
 }
+const placeText = ({ scope, parentName }) => `${courseText(scope)} › ${parentName || "the top level"}`;
+const fromText = (nodes, node) => {
+  const parents = pathOf(nodes, node.id).slice(0, -1).map((n) => n.name);
+  return [courseText(node), ...parents].join(" › ");
+};
+const insideText = (all) => {
+  const folders = all.filter((n) => n.kind !== "file").length - (all[0]?.kind !== "file" ? 1 : 0);
+  const files = all.filter((n) => n.kind === "file").length - (all[0]?.kind === "file" ? 1 : 0);
+  const parts = [folders && `${folders} folder${folders === 1 ? "" : "s"}`, files && `${files} file${files === 1 ? "" : "s"}`];
+  return folders + files ? ` with ${parts.filter(Boolean).join(" and ")} inside` : "";
+};
 
 /** Transfer (cut and paste). Returns the moved nodes as they are now. */
 export async function moveNode(nodes, id, target) {
   const problem = transferProblem(nodes, nodes.find((n) => n.id === id), target);
   if (problem) throw new Error(problem);
   const updates = planMove(nodes, id, target);
-  await commitUpdates(updates);
+  const all = descendants(nodes, id);
+  await commitUpdates(
+    updates,
+    {
+      action: "move",
+      summary: `Transferred ${all[0].kind} “${all[0].name}”${insideText(all)} from ${fromText(nodes, all[0])} to ${placeText(target)}`,
+      course: courseText(target.scope),
+    },
+    all,
+  );
   const byId = Object.fromEntries(updates.map((u) => [u.id, u.patch]));
   return descendants(nodes, id).map((n) => ({ ...n, ...byId[n.id] }));
 }
@@ -484,11 +598,11 @@ export async function copyNode(nodes, id, target, onProgress) {
   const f = fns.firestore;
   const plan = planCopy(nodes, id, target, () => f.doc(f.collection(db, "uniNodes")).id);
   let done = 0;
+  // Each file's text, figures and original first; the new nodes last, so a
+  // half-finished copy never shows.
   for (const item of plan) {
-    const ref = f.doc(db, "uniNodes", item.id);
     if (item.from.kind === "file") {
-      // Text, figures and original first; the node last, so a half-finished
-      // copy never shows.
+      const ref = f.doc(db, "uniNodes", item.id);
       const src = f.doc(db, "uniNodes", item.from.id);
       const subs = await Promise.all(
         ["parts", "images", "blobs"].map(async (c) => [c, await f.getDocs(f.collection(src, c))]),
@@ -500,8 +614,21 @@ export async function copyNode(nodes, id, target, onProgress) {
         await batch.commit();
       }
     }
-    await f.setDoc(ref, { ...item.data, createdAt: f.serverTimestamp() });
     onProgress?.(++done, plan.length);
+  }
+  const all = descendants(nodes, id);
+  const summary = `Copied ${all[0].kind} “${all[0].name}”${insideText(all)} from ${fromText(nodes, all[0])} to ${placeText(target)}`;
+  for (let i = 0; i < plan.length; i += BATCH_NODES) {
+    const slice = plan.slice(i, i + BATCH_NODES);
+    const batch = f.writeBatch(db);
+    const by = stamp(f, db, batch, {
+      action: "copy",
+      summary: summary + partOf(i, plan.length),
+      course: courseText(target.scope),
+      items: slice.map((p) => ({ id: p.id, name: p.data.name, kind: p.data.kind })),
+    });
+    slice.forEach((p) => batch.set(f.doc(db, "uniNodes", p.id), { ...p.data, ...by, createdAt: f.serverTimestamp() }));
+    await batch.commit();
   }
   return plan.map((p) => ({ id: p.id, ...p.data, hasOriginal: Boolean(p.data.blobCount) }));
 }
@@ -524,7 +651,21 @@ export async function transferCourse(from, to, mode, onProgress) {
     ...mine.map((n) => ({ id: n.id, patch: scopeFields(to) })),
     ...(mode === "swap" ? theirs.map((n) => ({ id: n.id, patch: scopeFields(from) })) : []),
   ];
-  await commitUpdates(updates);
+  await commitUpdates(
+    updates,
+    mode === "swap"
+      ? {
+          action: "swap-course",
+          summary: `Swapped all material of ${courseText(from)} (${mine.length} items) with ${courseText(to)} (${theirs.length} items)`,
+          course: `${courseText(from)} ⇄ ${courseText(to)}`,
+        }
+      : {
+          action: "move-course",
+          summary: `Moved all material of ${courseText(from)} (${mine.length} items) to ${courseText(to)}`,
+          course: courseText(to),
+        },
+    [...mine, ...theirs],
+  );
   return { moved: mine.length, copied: 0, back: mode === "swap" ? theirs.length : 0 };
 }
 

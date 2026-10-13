@@ -76,6 +76,8 @@ import {
   moveNode,
   transferCourse,
   transferProblem,
+  courseText,
+  setLibraryActor,
 } from "./university";
 import { fileExtension } from "./logic";
 import { smartSearch } from "./uniSearch";
@@ -98,6 +100,11 @@ const FILTERS = [
   ["supply", "Supply"],
 ];
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+/** A failed change, in words (a supporter whose access ended is refused). */
+const writeError = (e, fallback) =>
+  e?.code === "permission-denied"
+    ? "You don't have permission to change the library. Ask the admin if you should be a supporter."
+    : e?.message || fallback;
 
 // Icons the admin can give a subject or folder ("icon": a key below, or any
 // emoji). Without one, the name suggests it (Unit → layers, Lab → flask…).
@@ -292,7 +299,8 @@ function ExamBadge({ exam }) {
  * University library: pick university · degree · year (and Regular / Supply),
  * browse subjects → folders → files the admin added, search them, and open a
  * file to study it (with Gemini). The admin adds, renames and deletes
- * subjects, folders and files, uploads files, and edits the options.
+ * subjects, folders and files, uploads files, and edits the options;
+ * supporters do the same except deleting and editing the options.
  */
 const ACTIONS = {
   move: ["Transfer", "Cut and paste: it moves there and leaves here."],
@@ -305,7 +313,7 @@ const ACTIONS = {
  * everything inside it, or a whole course, to another university / degree /
  * year, and (for one item) into a subject or folder there.
  */
-function TransferDialog({ node, nodes, options, from, onClose, onDone, notify }) {
+function TransferDialog({ node, nodes, options, from, role, onClose, onDone, notify }) {
   const course = !node;
   const nextYear = options.years[options.years.indexOf(String(from.year)) + 1];
   const [action, setAction] = useState("move");
@@ -377,18 +385,18 @@ function TransferDialog({ node, nodes, options, from, onClose, onDone, notify })
         );
         onDone({ reload: true });
       } else if (action === "move") {
-        const moved = await moveNode(nodes, node.id, { scope: target, parentId });
+        const moved = await moveNode(nodes, node.id, { scope: target, parentId, parentName: parentId ? placeLabel : "" });
         notify(`Moved “${node.name}” to ${where} › ${placeLabel}.`);
         onDone({ moved, sameScope: same });
       } else {
-        const copies = await copyNode(nodes, node.id, { scope: target, parentId }, (n, total) =>
+        const copies = await copyNode(nodes, node.id, { scope: target, parentId, parentName: parentId ? placeLabel : "" }, (n, total) =>
           setBusy(`Copying ${n} of ${total}…`),
         );
         notify(`Copied “${node.name}” to ${where} › ${placeLabel}.`);
         onDone({ copies, sameScope: same });
       }
     } catch (e) {
-      notify(e.message || "The transfer did not finish. Try again.");
+      notify(writeError(e, "The transfer did not finish. Try again."));
       setBusy("");
     }
   }
@@ -405,7 +413,9 @@ function TransferDialog({ node, nodes, options, from, onClose, onDone, notify })
         <button className="close" aria-label="Close transfer" disabled={Boolean(busy)} onClick={onClose}>
           <X size={18} />
         </button>
-        <span className="eyebrow">ADMIN · {course ? "WHOLE COURSE" : node.kind.toUpperCase()}</span>
+        <span className="eyebrow">
+          {role} · {course ? "WHOLE COURSE" : node.kind.toUpperCase()}
+        </span>
         <h2 id="transfer-title">{course ? "Transfer this course" : `Transfer or copy “${node.name}”`}</h2>
         <div className="segmented transfer-actions" role="group" aria-label="Action">
           {Object.entries(ACTIONS)
@@ -481,7 +491,16 @@ function TransferDialog({ node, nodes, options, from, onClose, onDone, notify })
   );
 }
 
-export default function UniversityPage({ active, admin, notify, onOpenFile }) {
+export default function UniversityPage({ active, admin, supporter = false, user = null, notify, onOpenFile }) {
+  // The admin and supporters manage the library; only the admin deletes and
+  // edits the course options.
+  const editor = admin || supporter;
+  const role = admin ? "ADMIN" : "SUPPORTER";
+  useEffect(() => {
+    setLibraryActor(
+      user && editor ? { uid: user.uid, email: user.email || "", name: user.displayName || "", supporter: !admin } : null,
+    );
+  }, [user?.uid, admin, editor]);
   const saved = readChoice();
   const [options, setOptions] = useState(DEFAULT_OPTIONS);
   const [choice, setChoice] = useState({
@@ -631,6 +650,7 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
       const node = await createNode({
         scope: choice,
         parentId: folderId,
+        parentName: current?.name || "",
         kind: folderId ? "folder" : "subject",
         name: clean,
         exam: newExam,
@@ -639,34 +659,34 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
       setNewName("");
       notify(`${folderId ? "Folder" : "Subject"} "${clean}" added.`);
     } catch (e) {
-      notify(e.message || "Could not add it. Check that you are signed in as the admin.");
+      notify(writeError(e, "Could not add it."));
     }
   }
   async function rename(node) {
     const name = window.prompt(`Rename "${node.name}" to:`, node.name)?.trim();
     if (!name || name === node.name) return;
     try {
-      await updateNode(node.id, { name });
+      await updateNode(node.id, { name }, { action: "rename", summary: `Renamed ${node.kind} “${node.name}” to “${name}”`, course: courseText(node), items: [{ ...node, name }] });
       setNodes((all) => all.map((n) => (n.id === node.id ? { ...n, name } : n)));
     } catch (e) {
-      notify(e.message || "Could not rename it.");
+      notify(writeError(e, "Could not rename it."));
     }
   }
   async function changeExam(node, value) {
     try {
-      await updateNode(node.id, { exam: value });
+      await updateNode(node.id, { exam: value }, { action: "exam", summary: `Set “${node.name}” to ${EXAMS[value]} (was ${EXAMS[node.exam || "both"]})`, course: courseText(node), items: [node] });
       setNodes((all) => all.map((n) => (n.id === node.id ? { ...n, exam: value } : n)));
     } catch (e) {
-      notify(e.message || "Could not change it.");
+      notify(writeError(e, "Could not change it."));
     }
   }
   async function setIcon(node, icon) {
     setIconFor(null);
     try {
-      await updateNode(node.id, { icon: icon || null });
+      await updateNode(node.id, { icon: icon || null }, { action: "icon", summary: icon ? `Set the icon of “${node.name}” to ${icon}` : `Reset the icon of “${node.name}”`, course: courseText(node), items: [node] });
       setNodes((all) => all.map((n) => (n.id === node.id ? { ...n, icon: icon || null } : n)));
     } catch (e) {
-      notify(e.message || "Could not change the icon.");
+      notify(writeError(e, "Could not change the icon."));
     }
   }
   async function remove(node) {
@@ -679,7 +699,7 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
       if (gone.has(folderId)) setFolderId(node.parentId);
       notify(`"${node.name}" deleted.`);
     } catch (e) {
-      notify(e.message || "Could not delete it.");
+      notify(writeError(e, "Could not delete it."));
     }
   }
   async function uploadFiles(list) {
@@ -687,6 +707,7 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
     if (fileInput.current) fileInput.current.value = "";
     if (!files.length || !folderId) return;
     const parentId = folderId,
+      parentName = current?.name || "",
       scope = { ...choice },
       examTag = newExam;
     const queue = files.map((file) => ({ id: crypto.randomUUID(), name: file.name, file, status: "waiting", message: "Waiting…" }));
@@ -706,14 +727,14 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
         const pages = Array.isArray(read) ? read : read.pages;
         const images = (!Array.isArray(read) && read.images) || [];
         set(item.id, { status: "saving", message: "Saving for everyone…" });
-        const node = await saveUniFile({ scope, parentId, exam: examTag, file: item.file, pages, images });
+        const node = await saveUniFile({ scope, parentId, parentName, exam: examTag, file: item.file, pages, images });
         setNodes((n) => [...n, node]);
         set(item.id, {
           status: "done",
           message: `${plural(pages.length, "page")}${images.length ? ` · ${plural(images.length, "figure")}` : ""}${node.hasOriginal ? "" : " · original too large to keep (over 15 MB)"}`,
         });
       } catch (e) {
-        set(item.id, { status: "error", message: e.message || "Could not upload this file." });
+        set(item.id, { status: "error", message: writeError(e, "Could not upload this file.") });
       }
     }
   }
@@ -725,7 +746,7 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
       `${mode === "move" ? "Cut" : "Copied"} “${node.name}”. Go to any course or folder and press Paste here.`,
     );
   }
-  const pasteHere = { scope: choice, parentId: folderId || null };
+  const pasteHere = { scope: choice, parentId: folderId || null, parentName: current?.name || "" };
   const pasteProblem = !clip
     ? null
     : searched
@@ -762,7 +783,7 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
         notify(`Pasted a copy of “${clip.node.name}” in ${where} › ${placeName}.`);
       }
     } catch (e) {
-      notify(e.message || "Could not paste here.");
+      notify(writeError(e, "Could not paste here."));
     } finally {
       setPasting("");
     }
@@ -801,8 +822,8 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
 
   const card = (node, extra) => {
     const isFile = node.kind === "file";
-    // Admin tools act on the course shown; results from others are read-only.
-    const editable = admin && (!node.university || sameCourse(node));
+    // Library tools act on the course shown; results from others are read-only.
+    const editable = editor && (!node.university || sameCourse(node));
     const c = isFile ? null : counts(node);
     return (
       <li
@@ -898,9 +919,11 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
                 <button className="icon-button" aria-label={`Rename ${node.name}`} onClick={() => rename(node)}>
                   <Pencil size={14} />
                 </button>
-                <button className="icon-button" aria-label={`Delete ${node.name}`} onClick={() => remove(node)}>
-                  <Trash2 size={14} />
-                </button>
+                {admin && (
+                  <button className="icon-button" aria-label={`Delete ${node.name}`} onClick={() => remove(node)}>
+                    <Trash2 size={14} />
+                  </button>
+                )}
               </>
             )}
           </div>
@@ -957,7 +980,7 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
               </button>
             ))}
           </div>
-          {admin && (
+          {editor && (
             <span className="uni-select-admin">
               <button className="text-button" aria-expanded={moving} onClick={() => setMoving((v) => !v)}>
                 <ArrowRightLeft size={15} /> Transfer materials
@@ -965,9 +988,11 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
               <button className="text-button" onClick={() => setTransfer({ course: true })} disabled={status !== "ready"}>
                 <ArrowRightLeft size={15} /> Swap or move this year
               </button>
-              <button className="text-button" onClick={() => setEditingOptions((v) => !v)}>
-                <Settings2 size={15} /> Edit options
-              </button>
+              {admin && (
+                <button className="text-button" onClick={() => setEditingOptions((v) => !v)}>
+                  <Settings2 size={15} /> Edit options
+                </button>
+              )}
             </span>
           )}
         </div>
@@ -975,11 +1000,11 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
 
       {viewing && <DocumentViewer node={viewing} notify={notify} onClose={() => setViewing(null)} />}
 
-      {admin && moving && (
+      {editor && moving && (
         <section className="panel uni-options" aria-label="Transfer materials">
           <div className="uni-options-head">
             <div>
-              <span className="eyebrow">ADMIN · TRANSFER MATERIALS</span>
+              <span className="eyebrow">{role} · TRANSFER MATERIALS</span>
               <h3>Cut and paste, or copy and paste, between courses</h3>
             </div>
             <button className="icon-button" aria-label="Close transfer materials" onClick={() => setMoving(false)}>
@@ -990,8 +1015,9 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
         </section>
       )}
 
-      {admin && transfer && (
+      {editor && transfer && (
         <TransferDialog
+          role={role}
           node={transfer.node || null}
           nodes={nodes}
           options={options}
@@ -1084,13 +1110,13 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
         className={"panel uni-browser" + (dragging ? " dragging" : "")}
         aria-label={where}
         onDragEnter={(e) => {
-          if (!admin || !Array.from(e.dataTransfer?.types || []).includes("Files")) return;
+          if (!editor || !Array.from(e.dataTransfer?.types || []).includes("Files")) return;
           e.preventDefault();
           dragDepth.current++;
           setDragging(true);
         }}
         onDragOver={(e) => {
-          if (admin && Array.from(e.dataTransfer?.types || []).includes("Files")) e.preventDefault();
+          if (editor && Array.from(e.dataTransfer?.types || []).includes("Files")) e.preventDefault();
         }}
         onDragLeave={() => {
           if (--dragDepth.current <= 0) {
@@ -1099,7 +1125,7 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
           }
         }}
         onDrop={(e) => {
-          if (!admin) return;
+          if (!editor) return;
           e.preventDefault();
           dragDepth.current = 0;
           setDragging(false);
@@ -1117,7 +1143,7 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
             <small>{UPLOAD_HINT}</small>
           </div>
         )}
-        {admin && clip && (
+        {editor && clip && (
           <div className={`clip-bar ${clip.mode}`} role="region" aria-label="Clipboard">
             <span className="clip-what">
               {clip.mode === "move" ? <Scissors size={15} /> : <Copy size={15} />}
@@ -1224,8 +1250,14 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
               </div>
             </div>
 
-            {admin && (
-              <div className="uni-admin" aria-label="Admin tools">
+            {editor && (
+              <div className="uni-admin" aria-label={admin ? "Admin tools" : "Supporter tools"}>
+                {!admin && (
+                  <p className="fine uni-role-note">
+                    <strong>Supporter tools.</strong> You can add, upload, edit, transfer, copy and paste. Only the admin
+                    can delete. Your changes are recorded for the admin.
+                  </p>
+                )}
                 <form
                   className="uni-admin-row"
                   onSubmit={(e) => {
@@ -1313,10 +1345,10 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
             ) : (
               <p className="uni-empty">
                 {folderId
-                  ? admin
+                  ? editor
                     ? "This folder is empty. Add folders like Unit 1 or upload files."
                     : "Nothing here yet."
-                  : admin
+                  : editor
                     ? "No subjects yet for this course. Add the first one above."
                     : "No subjects have been added for this course yet. Check back soon."}
                 {exam !== "all" && " Showing " + EXAMS[exam] + " material only."}

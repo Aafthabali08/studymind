@@ -14,6 +14,10 @@ import {
   Clock,
   Unlock,
   ArrowRightLeft,
+  UserCog,
+  History,
+  UserPlus,
+  UserMinus,
 } from "lucide-react";
 import {
   ADMIN_EMAILS,
@@ -21,6 +25,10 @@ import {
   SUSPEND_FOR,
   TICKET_STATUSES,
   adminBans,
+  adminSupporters,
+  adminAudit,
+  addSupporter,
+  removeSupporter,
   banState,
   blockUser,
   isActiveNow,
@@ -45,6 +53,7 @@ import {
 } from "./SupportPage";
 import AttachmentPicker from "./AttachmentPicker";
 import MaterialTransfer from "./MaterialTransfer";
+import { AUDIT_ACTIONS } from "./university";
 import { setLearning } from "./ai/memory";
 
 /** Feedback items are Markdown; show them as readable plain text. */
@@ -62,7 +71,10 @@ const SECTIONS = [
   ["feedback", "Feedback", MessageSquareWarning],
   ["guidance", "AI guidance", Sparkles],
   ["transfer", "Transfer materials", ArrowRightLeft],
+  ["supporters", "Supporters", UserCog],
+  ["audit", "Audit log", History],
 ];
+const isAdminEmail = (email) => ADMIN_EMAILS.includes(String(email || "").toLowerCase());
 const date = (d) =>
   d ? new Intl.DateTimeFormat("en", { dateStyle: "medium" }).format(d) : "—";
 const dateTime = (d) =>
@@ -98,20 +110,32 @@ export default function AdminPage({ active, notify }) {
     [userFilter, setUserFilter] = useState("all"), // all | active | restricted
     [banForm, setBanForm] = useState({ duration: SUSPEND_FOR[1][1], reason: "" }),
     [banBusy, setBanBusy] = useState(false),
+    [supporters, setSupporters] = useState({}), // uid → supporter
+    [audit, setAudit] = useState([]),
+    [auditFilter, setAuditFilter] = useState({ uid: "all", action: "all", q: "" }),
+    [findSupporter, setFindSupporter] = useState(""),
+    [supporterMatches, setSupporterMatches] = useState(null),
+    [supporterDetail, setSupporterDetail] = useState(null), // uid
+    [roleBusy, setRoleBusy] = useState(false),
     [now, setNow] = useState(Date.now());
   const searchTimer = useRef(null);
+  const supporterTimer = useRef(null);
 
   async function load() {
     setLoading(true);
     try {
-      const [u, t, f, g, b] = await Promise.all([
+      const [u, t, f, g, b, s, a] = await Promise.all([
         adminUsers(),
         adminTickets(),
         adminFeedback(),
         loadGuidance(),
         adminBans().catch(() => ({})),
+        adminSupporters().catch(() => ({})),
+        adminAudit().catch(() => []),
       ]);
       setBans(b);
+      setSupporters(s);
+      setAudit(a);
       setNow(Date.now());
       setUsers(u);
       setTickets(t);
@@ -150,6 +174,19 @@ export default function AdminPage({ active, notify }) {
     );
     return () => clearTimeout(searchTimer.current);
   }, [search]);
+  // Find a registered user to make a supporter (email prefix), debounced.
+  useEffect(() => {
+    clearTimeout(supporterTimer.current);
+    if (!findSupporter.trim()) return setSupporterMatches(null);
+    supporterTimer.current = setTimeout(
+      () =>
+        adminUsers({ search: findSupporter })
+          .then(setSupporterMatches)
+          .catch(() => notify("User search failed.")),
+      300,
+    );
+    return () => clearTimeout(supporterTimer.current);
+  }, [findSupporter]);
 
   const stats = useMemo(() => {
     const docs = users.reduce((n, u) => n + (u.docCount || 0), 0);
@@ -394,6 +431,182 @@ export default function AdminPage({ active, notify }) {
     }
   }
 
+  // ---- Supporters ------------------------------------------------------------------
+  const userById = (id) => users.find((u) => u.id === id) || searchResults?.find((u) => u.id === id);
+  /** A supporter as a user row: their profile when loaded, else what the role saved. */
+  const supporterUser = (s) => ({ id: s.uid, email: s.email, name: s.name, ...(userById(s.uid) || {}) });
+  const supporterRows = Object.values(supporters)
+    .map(supporterUser)
+    .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email));
+  const changesBy = (uid) => audit.filter((a) => a.uid === uid);
+  async function grant(u) {
+    setRoleBusy(true);
+    try {
+      const s = await addSupporter(u);
+      setSupporters((all) => ({ ...all, [u.id]: s }));
+      notify(`${u.name || u.email} is now a supporter.`);
+    } catch (e) {
+      notify(e.message || "Could not add the supporter.");
+    } finally {
+      setRoleBusy(false);
+    }
+  }
+  async function revoke(u) {
+    const label = u.name || u.email;
+    if (!window.confirm(`Remove ${label} as a supporter? They keep their account; their changes stay in the audit log.`))
+      return;
+    setRoleBusy(true);
+    try {
+      await removeSupporter(u);
+      setSupporters((all) => {
+        const next = { ...all };
+        delete next[u.id];
+        return next;
+      });
+      setSupporterDetail((id) => (id === u.id ? null : id));
+      notify(`${label} is no longer a supporter.`);
+    } catch (e) {
+      notify(e.message || "Could not remove the supporter.");
+    } finally {
+      setRoleBusy(false);
+    }
+  }
+  function showChanges(uid) {
+    setAuditFilter({ uid, action: "all", q: "" });
+    setSection("audit");
+  }
+  const auditRows = audit.filter((a) => {
+    if (auditFilter.uid !== "all" && a.uid !== auditFilter.uid) return false;
+    if (auditFilter.action !== "all" && a.action !== auditFilter.action) return false;
+    const q = auditFilter.q.trim().toLowerCase();
+    return (
+      !q ||
+      [a.summary, a.course, a.email, a.name, ...(a.items || []).map((i) => i.name)].some((t) =>
+        String(t || "").toLowerCase().includes(q),
+      )
+    );
+  });
+  // Everyone in the log, including former supporters.
+  const auditPeople = Object.values(
+    Object.fromEntries([
+      ...audit.map((a) => [a.uid, { uid: a.uid, label: a.name || a.email }]),
+      ...Object.values(supporters).map((s) => [s.uid, { uid: s.uid, label: s.name || s.email }]),
+    ]),
+  ).sort((a, b) => a.label.localeCompare(b.label));
+
+  /** Suspend / block / lift, for a user or a supporter. */
+  const accessCard = (u) =>
+    isAdminEmail(u.email) ? (
+      <p className="fine">This is the admin account; it can't be blocked or suspended.</p>
+    ) : (
+      <div className="access-card" aria-label="Access">
+        <strong>Access</strong>
+        {statusOf(u) ? (
+          <>
+            <p className="fine">
+              {statusOf(u).kind === "blocked"
+                ? "Blocked until you unblock them."
+                : `Suspended until ${fmt(statusOf(u).until)}; access returns by itself.`}
+              {statusOf(u).reason && ` Reason: ${statusOf(u).reason}`}
+            </p>
+            <button className="secondary" disabled={banBusy} onClick={() => lift(u)}>
+              <Unlock size={15} /> {statusOf(u).kind === "blocked" ? "Unblock" : "End suspension"}
+            </button>
+          </>
+        ) : (
+          <>
+            <input
+              aria-label="Reason (shown to the user)"
+              placeholder="Reason (optional, shown to the user)"
+              value={banForm.reason}
+              maxLength={300}
+              onChange={(e) => setBanForm((f) => ({ ...f, reason: e.target.value }))}
+            />
+            <div className="access-actions">
+              <select
+                aria-label="Suspend for"
+                value={banForm.duration}
+                onChange={(e) => setBanForm((f) => ({ ...f, duration: Number(e.target.value) }))}
+              >
+                {SUSPEND_FOR.map(([l, ms]) => (
+                  <option key={ms} value={ms}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+              <button className="secondary" disabled={banBusy} onClick={() => restrict(u, "suspend")}>
+                <Clock size={15} /> Suspend
+              </button>
+              <button className="secondary danger-button" disabled={banBusy} onClick={() => restrict(u, "block")}>
+                <Ban size={15} /> Block
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  /** Make / remove supporter, for a user. */
+  const roleCard = (u) =>
+    isAdminEmail(u.email) ? null : (
+      <div className="access-card" aria-label="Supporter role">
+        <strong>Supporter role</strong>
+        {supporters[u.id] ? (
+          <>
+            <p className="fine">
+              Supporter since {date(supporters[u.id].addedAt)} · {changesBy(u.id).length} changes recorded. They can add,
+              upload, edit, transfer, copy and paste in the University library, but not delete.
+            </p>
+            <div className="access-actions">
+              <button className="secondary" onClick={() => showChanges(u.id)}>
+                <History size={15} /> View their changes
+              </button>
+              <button className="secondary danger-button" disabled={roleBusy} onClick={() => revoke(u)}>
+                <UserMinus size={15} /> Remove supporter
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="fine">
+              A supporter can add subjects, folders and files to the University library, upload, edit, transfer, copy and
+              paste. They can't delete or open this dashboard.
+            </p>
+            <button className="secondary" disabled={roleBusy} onClick={() => grant(u)}>
+              <UserPlus size={15} /> Make supporter
+            </button>
+          </>
+        )}
+      </div>
+    );
+  const auditList = (rows) => (
+    <ol className="audit-list" aria-label="Changes">
+      {rows.map((a) => (
+        <li key={a.id}>
+          <div className="audit-head">
+            <span className={`audit-chip ${a.action}`}>{AUDIT_ACTIONS[a.action] || a.action}</span>
+            <strong>{a.name || a.email}</strong>
+            <time dateTime={a.at?.toISOString?.()}>{dateTime(a.at)}</time>
+          </div>
+          <p>{a.summary}</p>
+          {a.course && <small>{a.course}</small>}
+          {a.count > 1 && (
+            <details>
+              <summary>{a.count} items</summary>
+              <ul>
+                {(a.items || []).map((i) => (
+                  <li key={i.id}>
+                    {i.name || i.id} {i.kind && <small>({i.kind})</small>}
+                  </li>
+                ))}
+                {a.count > (a.items || []).length && <li>…and {a.count - a.items.length} more</li>}
+              </ul>
+            </details>
+          )}
+        </li>
+      ))}
+    </ol>
+  );
+
   return (
     <div hidden={!active}>
       <section className="page-title">
@@ -458,6 +671,10 @@ export default function AdminPage({ active, notify }) {
                 <div>
                   <strong>{stats.restricted}</strong>
                   <small>blocked or suspended</small>
+                </div>
+                <div>
+                  <strong>{Object.keys(supporters).length}</strong>
+                  <small>supporters</small>
                 </div>
                 <div>
                   <strong>{stats.docs}</strong>
@@ -629,57 +846,10 @@ export default function AdminPage({ active, notify }) {
                   <h3>{userDetail.name || userDetail.email}</h3>
                   <p className="fine">
                     {userDetail.email} · <UserStatus u={userDetail} />
+                    {supporters[userDetail.id] && <span className="role-badge">Supporter</span>}
                   </p>
-                  {ADMIN_EMAILS.includes(String(userDetail.email || "").toLowerCase()) ? (
-                    <p className="fine">This is the admin account; it can't be blocked or suspended.</p>
-                  ) : (
-                    <div className="access-card" aria-label="Access">
-                      <strong>Access</strong>
-                      {statusOf(userDetail) ? (
-                        <>
-                          <p className="fine">
-                            {statusOf(userDetail).kind === "blocked"
-                              ? "Blocked until you unblock them."
-                              : `Suspended until ${fmt(statusOf(userDetail).until)}; access returns by itself.`}
-                            {statusOf(userDetail).reason && ` Reason: ${statusOf(userDetail).reason}`}
-                          </p>
-                          <button className="secondary" disabled={banBusy} onClick={() => lift(userDetail)}>
-                            <Unlock size={15} />{" "}
-                            {statusOf(userDetail).kind === "blocked" ? "Unblock" : "End suspension"}
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <input
-                            aria-label="Reason (shown to the user)"
-                            placeholder="Reason (optional, shown to the user)"
-                            value={banForm.reason}
-                            maxLength={300}
-                            onChange={(e) => setBanForm((f) => ({ ...f, reason: e.target.value }))}
-                          />
-                          <div className="access-actions">
-                            <select
-                              aria-label="Suspend for"
-                              value={banForm.duration}
-                              onChange={(e) => setBanForm((f) => ({ ...f, duration: Number(e.target.value) }))}
-                            >
-                              {SUSPEND_FOR.map(([l, ms]) => (
-                                <option key={ms} value={ms}>
-                                  {l}
-                                </option>
-                              ))}
-                            </select>
-                            <button className="secondary" disabled={banBusy} onClick={() => restrict(userDetail, "suspend")}>
-                              <Clock size={15} /> Suspend
-                            </button>
-                            <button className="secondary danger-button" disabled={banBusy} onClick={() => restrict(userDetail, "block")}>
-                              <Ban size={15} /> Block
-                            </button>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  )}
+                  {accessCard(userDetail)}
+                  {roleCard(userDetail)}
                   <div className="admin-stats">
                     <div>
                       <strong>{userDetail.docCount || 0}</strong>
@@ -712,6 +882,7 @@ export default function AdminPage({ active, notify }) {
                         >
                           <span>
                             <strong>
+                              {t.appeal && <span className="role-badge appeal">Appeal</span>}
                               {t.subject}
                               {pictureCount(t) > 0 && (
                                 <span
@@ -759,7 +930,10 @@ export default function AdminPage({ active, notify }) {
                               className="user-cell"
                               aria-label={`Open ${u.email}`}
                             >
-                              <strong>{u.name || "—"}</strong>
+                              <strong>
+                                {u.name || "—"}
+                                {supporters[u.id] && <span className="role-badge">Supporter</span>}
+                              </strong>
                               <small>{u.email}</small>
                             </button>
                           </td>
@@ -799,6 +973,23 @@ export default function AdminPage({ active, notify }) {
                     {ticket.email} · {ticket.category} · opened{" "}
                     {dateTime(ticket.createdAt)}
                   </p>
+                  {ticket.appeal && (
+                    <div className="appeal-note">
+                      <p>
+                        Sent with <strong>Contact admin</strong> from the {ticket.banKind || "locked"} account screen. They
+                        can't read replies until their access is back.
+                      </p>
+                      <button
+                        className="secondary"
+                        onClick={() => {
+                          setUserDetail(userById(ticket.uid) || { id: ticket.uid, email: ticket.email, name: ticket.name });
+                          setSection("users");
+                        }}
+                      >
+                        <Unlock size={15} /> Manage their access
+                      </button>
+                    </div>
+                  )}
                   <TicketThread ticket={ticket} viewer="admin" />
                   <form className="admin-reply" onSubmit={sendReply}>
                     <textarea
@@ -886,6 +1077,7 @@ export default function AdminPage({ active, notify }) {
                           )}
                           <span>
                             <strong>
+                              {t.appeal && <span className="role-badge appeal">Appeal</span>}
                               {t.subject}
                               {pictureCount(t) > 0 && (
                                 <span
@@ -1017,6 +1209,171 @@ export default function AdminPage({ active, notify }) {
                 degree or year, into any subject or folder there.
               </p>
               <MaterialTransfer notify={notify} />
+            </>
+          )}
+
+          {section === "supporters" && (
+            <>
+              <h2>Supporters</h2>
+              <p className="fine">
+                Supporters manage the University library with you: they add subjects, folders and files, upload, rename,
+                change exam tags and icons, transfer, copy and paste. They can't delete, edit the course options or open
+                this dashboard. Everything they change is recorded in the Audit log.
+              </p>
+              {supporterDetail && supporters[supporterDetail] ? (
+                (() => {
+                  const u = supporterUser(supporters[supporterDetail]);
+                  const recent = changesBy(u.id).slice(0, 10);
+                  return (
+                    <div className="user-detail">
+                      <button className="text-button" onClick={() => setSupporterDetail(null)}>
+                        ← All supporters
+                      </button>
+                      <h3>{u.name || u.email}</h3>
+                      <p className="fine">
+                        {u.email} · <UserStatus u={u} /> · last active {dateTime(u.lastActive)}
+                      </p>
+                      {accessCard(u)}
+                      {roleCard(u)}
+                      <h3>Recent changes</h3>
+                      {recent.length ? auditList(recent) : <p className="fine">No changes yet.</p>}
+                    </div>
+                  );
+                })()
+              ) : (
+                <>
+                  <div className="supporter-add" aria-label="Add a supporter">
+                    <h3>Add a supporter</h3>
+                    <label className="search admin-search">
+                      <Search size={17} />
+                      <input
+                        aria-label="Find a registered user by email"
+                        placeholder="Find a registered user by email"
+                        value={findSupporter}
+                        onChange={(e) => setFindSupporter(e.target.value)}
+                      />
+                    </label>
+                    {supporterMatches && (
+                      <ul className="supporter-matches">
+                        {supporterMatches.map((u) => (
+                          <li key={u.id}>
+                            <span>
+                              <strong>{u.name || "—"}</strong>
+                              <small>{u.email}</small>
+                            </span>
+                            {isAdminEmail(u.email) ? (
+                              <small>Admin</small>
+                            ) : supporters[u.id] ? (
+                              <small>Already a supporter</small>
+                            ) : (
+                              <button
+                                className="secondary"
+                                disabled={roleBusy}
+                                aria-label={`Make ${u.email} a supporter`}
+                                onClick={() => grant(u)}
+                              >
+                                <UserPlus size={15} /> Make supporter
+                              </button>
+                            )}
+                          </li>
+                        ))}
+                        {!supporterMatches.length && (
+                          <li className="fine">No registered user with that email. They need to sign in to StudyMind once first.</li>
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                  <h3>Current supporters · {supporterRows.length}</h3>
+                  {supporterRows.length ? (
+                    <div className="md-table">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Supporter</th>
+                            <th>Status</th>
+                            <th>Changes</th>
+                            <th>Added</th>
+                            <th>Last active</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {supporterRows.map((u) => (
+                            <tr key={u.id} className="user-row" onClick={() => setSupporterDetail(u.id)}>
+                              <td>
+                                <button className="user-cell" aria-label={`Manage supporter ${u.email}`}>
+                                  <strong>{u.name || "—"}</strong>
+                                  <small>{u.email}</small>
+                                </button>
+                              </td>
+                              <td>
+                                <UserStatus u={u} />
+                              </td>
+                              <td>{changesBy(u.id).length}</td>
+                              <td>{date(supporters[u.id]?.addedAt)}</td>
+                              <td>{date(u.lastActive)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="fine">No supporters yet. Find a registered user above to add one.</p>
+                  )}
+                </>
+              )}
+            </>
+          )}
+
+          {section === "audit" && (
+            <>
+              <h2>Audit log</h2>
+              <p className="fine">
+                Every change supporters make to the University library, newest first. Each entry is saved together with the
+                change itself, so it can't be skipped or edited.
+              </p>
+              <div className="audit-filters">
+                <label>
+                  Supporter
+                  <select
+                    value={auditFilter.uid}
+                    onChange={(e) => setAuditFilter((f) => ({ ...f, uid: e.target.value }))}
+                  >
+                    <option value="all">Everyone</option>
+                    {auditPeople.map((p) => (
+                      <option key={p.uid} value={p.uid}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Change
+                  <select
+                    value={auditFilter.action}
+                    onChange={(e) => setAuditFilter((f) => ({ ...f, action: e.target.value }))}
+                  >
+                    <option value="all">All changes</option>
+                    {Object.entries(AUDIT_ACTIONS).map(([v, l]) => (
+                      <option key={v} value={v}>
+                        {l}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="search admin-search">
+                  <Search size={17} />
+                  <input
+                    aria-label="Search the audit log"
+                    placeholder="Search files, folders, courses…"
+                    value={auditFilter.q}
+                    onChange={(e) => setAuditFilter((f) => ({ ...f, q: e.target.value }))}
+                  />
+                </label>
+              </div>
+              <p className="fine" role="status">
+                {auditRows.length} of {audit.length} changes
+              </p>
+              {auditRows.length ? auditList(auditRows) : <p className="fine">No changes recorded{audit.length ? " match these filters" : " yet"}.</p>}
             </>
           )}
 
