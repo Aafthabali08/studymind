@@ -13,6 +13,7 @@ import {
   Ban,
   Clock,
   Unlock,
+  ArrowRightLeft,
 } from "lucide-react";
 import {
   ADMIN_EMAILS,
@@ -43,6 +44,7 @@ import {
   usePasteImages,
 } from "./SupportPage";
 import AttachmentPicker from "./AttachmentPicker";
+import MaterialTransfer from "./MaterialTransfer";
 import { setLearning } from "./ai/memory";
 
 /** Feedback items are Markdown; show them as readable plain text. */
@@ -59,6 +61,7 @@ const SECTIONS = [
   ["tickets", "Tickets", Inbox],
   ["feedback", "Feedback", MessageSquareWarning],
   ["guidance", "AI guidance", Sparkles],
+  ["transfer", "Transfer materials", ArrowRightLeft],
 ];
 const date = (d) =>
   d ? new Intl.DateTimeFormat("en", { dateStyle: "medium" }).format(d) : "—";
@@ -1003,6 +1006,17 @@ export default function AdminPage({ active, notify }) {
                 ))}
                 {!shownFeedback.length && <p className="fine">Nothing here.</p>}
               </ul>
+            </>
+          )}
+
+          {section === "transfer" && (
+            <>
+              <h2>Transfer materials</h2>
+              <p className="fine">
+                Move (cut and paste) or copy university subjects, units, folders and files to another university,
+                degree or year, into any subject or folder there.
+              </p>
+              <MaterialTransfer notify={notify} />
             </>
           )}
 

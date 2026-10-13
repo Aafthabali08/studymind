@@ -33,6 +33,8 @@ Everything runs on the free Firebase **Spark** plan and the free Gemini API tier
   - **Users:** search by email; status (**Active now** = used the app in the last 5 minutes, Offline, Blocked, Suspended until …), documents, tickets, joined and last active. Filter by *Active now* or *Blocked & suspended*.
   - **Block or suspend a user:** open the user → Access. **Suspend** for 1 hour, 1 day, 3 days, 1 week or 30 days (it ends by itself), or **Block** until you unblock them, with an optional reason the user sees. Enforced by the Firestore rules: a blocked or suspended account can't read or save any data, and the app shows them a locked screen. The admin account can't be blocked.
   - **University library:** on the University page, add subjects, folders (one-tap Unit 1–5, Important questions, Previous papers, Notes, Lab) and upload files into them with **Upload files** or by **dragging and dropping** onto the folder (PDF, Word, PowerPoint, images, TXT, Markdown, CSV); give each subject or folder its own **icon** (30 built-in or any emoji); tag each as Regular, Supply or both; rename and delete (a folder with everything in it). **Edit options** adds or removes universities, degrees and years (Years 1–5 by default).
+  - **Transfer materials** (Admin dashboard → Transfer materials, or the University page's *Transfer materials* button; admin only): 1 · **From**: pick university, degree and year, then tick the subjects, units, folders and files (or *Select everything*); 2 · **How**: *Transfer* (cut and paste) or *Copy* (copy and paste); 3 · **To**: pick university, degree and year, then the subject or folder (or the top level); press *Transfer here* / *Paste copies here*.
+  - **Cut, copy and paste:** every subject, folder and file card has **Cut** (transfer) and **Copy**. A clipboard bar then follows you to any university, degree, year and folder; **Paste here** puts it where you are (top level or the open folder). A cut pastes once; a copy can be pasted many times.
   - **Transfer or copy:** the ⇄ button on any subject, folder or file moves it (*Transfer* = cut and paste) or duplicates it (*Copy* = copy and paste) with everything inside to another university, degree or year, at the top level or into a subject or folder there. **Transfer this year** moves, copies or **swaps** a whole course with another year, degree or university.
   - **Tickets:** read the complaint, reply, set the status (Open, In progress, Resolved, Closed). The user gets a 🔔 notification.
   - **Feedback:** everything users marked ✓ correct or ✗ wrong. One click turns it into an AI guidance rule.
@@ -60,7 +62,7 @@ firebase deploy --only firestore:rules
 ```sh
 npm install
 npm run dev     # http://127.0.0.1:5173
-npm test        # 242 tests
+npm test        # 249 tests
 npm run build
 npm run preview # production build at http://127.0.0.1:4173
 npm run deploy  # tests + build + Firebase Hosting + Firestore rules

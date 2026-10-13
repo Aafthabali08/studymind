@@ -15,6 +15,9 @@ import {
   Cpu,
   Database,
   ArrowRightLeft,
+  ClipboardPaste,
+  Copy,
+  Scissors,
   ExternalLink,
   FileImage,
   FileQuestion,
@@ -76,6 +79,7 @@ import {
 } from "./university";
 import { fileExtension } from "./logic";
 import { smartSearch } from "./uniSearch";
+import MaterialTransfer from "./MaterialTransfer";
 
 const ALL_TTL = 5 * 60 * 1000; // the whole library is re-read at most every 5 minutes
 
@@ -501,6 +505,10 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
   const [opening, setOpening] = useState(null);
   const [iconFor, setIconFor] = useState(null); // node id with the picker open
   const [transfer, setTransfer] = useState(null); // { node } or { course: true }
+  // Cut / Copy → go anywhere (any course, any folder) → Paste here.
+  const [clip, setClip] = useState(null); // { mode: "move" | "copy", node, from }
+  const [pasting, setPasting] = useState("");
+  const [moving, setMoving] = useState(false); // the Transfer materials panel
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
   const fileInput = useRef(null);
@@ -708,6 +716,56 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
     }
   }
 
+  // ---- Cut, copy and paste ---------------------------------------------------------
+  function clipTo(node, mode) {
+    setClip({ mode, node, from: { university: node.university, degree: node.degree, year: String(node.year) } });
+    notify(
+      `${mode === "move" ? "Cut" : "Copied"} “${node.name}”. Go to any course or folder and press Paste here.`,
+    );
+  }
+  const pasteHere = { scope: choice, parentId: folderId || null };
+  const pasteProblem = !clip
+    ? null
+    : searched
+      ? "Close the search and open a course or folder to paste."
+      : clip.node.kind === "file" && !folderId
+        ? "Open a subject or folder to paste a file into it."
+        : clip.mode === "move"
+          ? transferProblem(
+              sameCourse(clip.node) ? nodes : [clip.node],
+              clip.node,
+              pasteHere,
+            )
+          : null;
+  async function paste() {
+    if (!clip || pasteProblem) return;
+    setPasting(clip.mode === "move" ? "Moving…" : "Copying…");
+    try {
+      // The source course as it is now (it may have changed since the cut).
+      const source = sameCourse(clip.node) ? nodes : await loadNodes(clip.from);
+      if (!source.some((n) => n.id === clip.node.id))
+        throw new Error(`“${clip.node.name}” is no longer there. Cut or copy it again.`);
+      const placeName = current ? current.name : "the top level";
+      if (clip.mode === "move") {
+        const moved = await moveNode(source, clip.node.id, pasteHere);
+        const ids = new Set(moved.map((n) => n.id));
+        setNodes((all) => [...all.filter((n) => !ids.has(n.id)), ...moved]);
+        notify(`Moved “${clip.node.name}” to ${where} › ${placeName}.`);
+        setClip(null);
+      } else {
+        const copies = await copyNode(source, clip.node.id, pasteHere, (n, total) =>
+          setPasting(`Copying ${n} of ${total}…`),
+        );
+        setNodes((all) => [...all, ...copies]);
+        notify(`Pasted a copy of “${clip.node.name}” in ${where} › ${placeName}.`);
+      }
+    } catch (e) {
+      notify(e.message || "Could not paste here.");
+    } finally {
+      setPasting("");
+    }
+  }
+
   // ---- Opening -------------------------------------------------------------------
   async function open(node) {
     const other = node.university && !sameCourse(node);
@@ -759,7 +817,10 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
     const editable = admin && (!node.university || sameCourse(node));
     const c = isFile ? null : counts(node);
     return (
-      <li className={`uni-card ${node.kind}`} key={node.id}>
+      <li
+        className={`uni-card ${node.kind}` + (clip?.mode === "move" && clip.node.id === node.id ? " is-cut" : "")}
+        key={node.id}
+      >
         <button
           className="uni-card-open"
           onClick={() => open(node)}
@@ -794,6 +855,22 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
             )}
             {editable && (
               <>
+                <button
+                  className={"text-button clip-button" + (clip?.node.id === node.id && clip.mode === "move" ? " active" : "")}
+                  aria-label={`Cut ${node.name}`}
+                  title="Cut (transfer): paste it in another course or folder"
+                  onClick={() => clipTo(node, "move")}
+                >
+                  <Scissors size={14} /> Cut
+                </button>
+                <button
+                  className={"text-button clip-button" + (clip?.node.id === node.id && clip.mode === "copy" ? " active" : "")}
+                  aria-label={`Copy ${node.name}`}
+                  title="Copy: paste copies anywhere"
+                  onClick={() => clipTo(node, "copy")}
+                >
+                  <Copy size={14} /> Copy
+                </button>
                 <select
                   aria-label={`Exam for ${node.name}`}
                   value={node.exam || "both"}
@@ -818,7 +895,7 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
                 <button
                   className="icon-button"
                   aria-label={`Transfer or copy ${node.name}`}
-                  title="Transfer or copy"
+                  title="Send to another course or folder…"
                   onClick={() => setTransfer({ node })}
                 >
                   <ArrowRightLeft size={14} />
@@ -887,8 +964,11 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
           </div>
           {admin && (
             <span className="uni-select-admin">
+              <button className="text-button" aria-expanded={moving} onClick={() => setMoving((v) => !v)}>
+                <ArrowRightLeft size={15} /> Transfer materials
+              </button>
               <button className="text-button" onClick={() => setTransfer({ course: true })} disabled={status !== "ready"}>
-                <ArrowRightLeft size={15} /> Transfer this year
+                <ArrowRightLeft size={15} /> Swap or move this year
               </button>
               <button className="text-button" onClick={() => setEditingOptions((v) => !v)}>
                 <Settings2 size={15} /> Edit options
@@ -897,6 +977,21 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
           )}
         </div>
       </section>
+
+      {admin && moving && (
+        <section className="panel uni-options" aria-label="Transfer materials">
+          <div className="uni-options-head">
+            <div>
+              <span className="eyebrow">ADMIN · TRANSFER MATERIALS</span>
+              <h3>Cut and paste, or copy and paste, between courses</h3>
+            </div>
+            <button className="icon-button" aria-label="Close transfer materials" onClick={() => setMoving(false)}>
+              <X size={16} />
+            </button>
+          </div>
+          <MaterialTransfer notify={notify} initialFrom={choice} onChanged={reload} />
+        </section>
+      )}
 
       {admin && transfer && (
         <TransferDialog
@@ -1023,6 +1118,30 @@ export default function UniversityPage({ active, admin, notify, onOpenFile }) {
               {folderId && !searched ? `Drop to upload to “${current?.name}”` : "Open a subject or folder to upload"}
             </strong>
             <small>{UPLOAD_HINT}</small>
+          </div>
+        )}
+        {admin && clip && (
+          <div className={`clip-bar ${clip.mode}`} role="region" aria-label="Clipboard">
+            <span className="clip-what">
+              {clip.mode === "move" ? <Scissors size={15} /> : <Copy size={15} />}
+              <span>
+                <strong>
+                  {clip.mode === "move" ? "Cut" : "Copied"} “{clip.node.name}”
+                </strong>
+                <small>
+                  from {clip.from.university} · {clip.from.degree} · Year {clip.from.year}
+                  {pasteProblem ? ` · ${pasteProblem}` : ` · paste into ${current ? `“${current.name}”` : `the top level of Year ${choice.year}`}`}
+                </small>
+              </span>
+            </span>
+            <span className="clip-actions">
+              <button className="primary" disabled={Boolean(pasteProblem) || Boolean(pasting)} onClick={paste}>
+                <ClipboardPaste size={15} /> {pasting || "Paste here"}
+              </button>
+              <button className="text-button" disabled={Boolean(pasting)} onClick={() => setClip(null)}>
+                Cancel
+              </button>
+            </span>
           </div>
         )}
         {searched ? (

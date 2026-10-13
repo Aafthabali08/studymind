@@ -139,7 +139,7 @@ it("moves, copies or swaps a whole year with another one", async () => {
   api.transferCourse.mockResolvedValue({ moved: 5, copied: 0, back: 1 });
   const notify = page();
   await screen.findByRole("button", { name: "Open DSA" });
-  await userEvent.click(screen.getByRole("button", { name: /Transfer this year/ }));
+  await userEvent.click(screen.getByRole("button", { name: /Swap or move this year/ }));
   const dialog = screen.getByRole("dialog", { name: "Transfer this course" });
   expect(within(dialog).getByLabelText("Year")).toHaveValue("2"); // the next year
   await userEvent.click(within(dialog).getByRole("button", { name: "Swap" }));
@@ -156,4 +156,69 @@ it("moves, copies or swaps a whole year with another one", async () => {
   );
   expect(notify).toHaveBeenCalledWith("Swapped: 5 items moved to GITAM VIZAG · CSE CORE · Year 2 and 1 item came back.");
   expect(api.loadNodes).toHaveBeenCalledTimes(3); // reloaded after
+});
+
+describe("cut, copy and paste", () => {
+  it("cuts a subject in Year 1, pastes it in Year 2, and the clipboard follows across courses", async () => {
+    api.moveNode.mockImplementation(async (nodes, id, target) =>
+      nodes.filter((n) => ["dsa", "u1", "u2", "f1"].includes(n.id)).map((n) => ({ ...n, ...target.scope, year: "2", parentId: n.id === id ? null : n.parentId })),
+    );
+    const notify = page();
+    await userEvent.click(await screen.findByRole("button", { name: "Cut DSA" }));
+    expect(notify).toHaveBeenCalledWith("Cut “DSA”. Go to any course or folder and press Paste here.");
+    const bar = screen.getByRole("region", { name: "Clipboard" });
+    expect(bar).toHaveTextContent("Cut “DSA”");
+    // Pasting where it already is isn't possible.
+    expect(within(bar).getByRole("button", { name: /Paste here/ })).toBeDisabled();
+    expect(bar).toHaveTextContent("It is already there.");
+    // Go to Year 2: the clipboard is still there.
+    await userEvent.selectOptions(screen.getByLabelText("Year"), "2");
+    await screen.findByRole("button", { name: "Open Algorithms" });
+    const bar2 = screen.getByRole("region", { name: "Clipboard" });
+    expect(bar2).toHaveTextContent("from GITAM VIZAG · CSE CORE · Year 1 · paste into the top level of Year 2");
+    await userEvent.click(within(bar2).getByRole("button", { name: /Paste here/ }));
+    expect(api.moveNode).toHaveBeenCalledWith(NODES, "dsa", { scope: expect.objectContaining({ year: "2" }), parentId: null });
+    expect(notify).toHaveBeenCalledWith("Moved “DSA” to GITAM VIZAG · CSE CORE · Year 2 › the top level.");
+    expect(screen.getByRole("button", { name: "Open DSA" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Clipboard" })).toBeNull(); // a cut pastes once
+  });
+
+  it("copies a folder and pastes it into folders of another course, more than once", async () => {
+    let n = 0;
+    api.copyNode.mockImplementation(async (nodes, id, target) => [
+      { id: `copy${++n}`, kind: "folder", name: "Unit 1", parentId: target.parentId, exam: "both", ...target.scope },
+    ]);
+    page();
+    await userEvent.click(await screen.findByRole("button", { name: "Open DSA" }));
+    await userEvent.click(screen.getByRole("button", { name: "Copy Unit 1" }));
+    await userEvent.selectOptions(screen.getByLabelText("Year"), "2");
+    await userEvent.click(await screen.findByRole("button", { name: "Open Algorithms" }));
+    const bar = screen.getByRole("region", { name: "Clipboard" });
+    expect(bar).toHaveTextContent("paste into “Algorithms”");
+    await userEvent.click(within(bar).getByRole("button", { name: /Paste here/ }));
+    expect(api.copyNode).toHaveBeenLastCalledWith(NODES, "u1", { scope: expect.objectContaining({ year: "2" }), parentId: "algo" }, expect.any(Function));
+    expect(await screen.findByRole("button", { name: "Open Unit 1" })).toBeVisible();
+    // A copy stays on the clipboard: paste again.
+    await userEvent.click(within(screen.getByRole("region", { name: "Clipboard" })).getByRole("button", { name: /Paste here/ }));
+    expect(api.copyNode).toHaveBeenCalledTimes(2);
+    await userEvent.click(within(screen.getByRole("region", { name: "Clipboard" })).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("region", { name: "Clipboard" })).toBeNull();
+  });
+
+  it("won't paste a file at the top level or a folder inside itself", async () => {
+    page();
+    await userEvent.click(await screen.findByRole("button", { name: "Open DSA" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open Unit 1" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cut Arrays" }));
+    await userEvent.click(within(screen.getByRole("navigation", { name: "Folder path" })).getByRole("button", { name: "Subjects" }));
+    let bar = screen.getByRole("region", { name: "Clipboard" });
+    expect(bar).toHaveTextContent("Open a subject or folder to paste a file into it.");
+    expect(within(bar).getByRole("button", { name: /Paste here/ })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Cut DSA" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open DSA" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open Unit 1" }));
+    bar = screen.getByRole("region", { name: "Clipboard" });
+    expect(bar).toHaveTextContent("A folder can't be moved inside itself.");
+    expect(within(bar).getByRole("button", { name: /Paste here/ })).toBeDisabled();
+  });
 });
